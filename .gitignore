@@ -1,0 +1,41 @@
+# ── Node / Frontend ──────────────────────────────────────────────
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+
+# ── Python / Backend ─────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+.env
+*.egg-info/
+
+# ── Uploads (bitstreams — server-generated, not source code) ─────
+web/backend/uploads/
+
+# ── OS / Editor ──────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── Sensitive / local-only files ─────────────────────────────────
+keys/
+*.key
+*.pem
+walkthrough.md
+"bitstream net me.txt"
+bitstream*.txt
+
+
+*.log
+npm-debug.log*
