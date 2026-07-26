@@ -28,49 +28,50 @@
  * ============================================================
  */
 
-#include <WiFi.h>
-#include <ArduinoWebsockets.h>
 #include <ArduinoJson.h>
-#include <esp_task_wdt.h>   // Watchdog
+#include <ArduinoWebsockets.h>
+#include <WiFi.h>
+#include <esp_task_wdt.h> // Watchdog
 
 // ── Credentials & endpoint ───────────────────────────────────────
-const char* SSID      = "Dream 143 F-1";
-const char* PASSWORD  = "harsh1326";
-const char* WS_URL    = "ws://bitstream-net.me:8000/ws/hardware?node_id=ESP32-S3";
+const char *SSID = "Dream 143 F-1";
+const char *PASSWORD = "harsh1326";
+const char *WS_URL = "ws://bitstream-net.me:8000/ws/hardware?node_id=ESP32-S3";
 
 // ── UART1 pins (dedicated, do NOT conflict with USB-serial) ──────
-#define UART_TX_PIN  17
-#define UART_RX_PIN  18
-#define UART_BAUD    115200
+#define UART_TX_PIN 43
+#define UART_RX_PIN 44
+#define UART_BAUD 115200
 
 // ── Timing constants ─────────────────────────────────────────────
-#define TELEMETRY_INTERVAL_MS   1200   // telemetry frame rate
-#define HEARTBEAT_TIMEOUT_MS    5000   // RP2040 link degraded after this
-#define WS_RECONNECT_DELAY_MS   3000   // wait between reconnect attempts
-#define WATCHDOG_TIMEOUT_S      30     // reboot if loop stalls this long
+#define TELEMETRY_INTERVAL_MS 1200 // telemetry frame rate
+#define HEARTBEAT_TIMEOUT_MS 5000  // RP2040 link degraded after this
+#define WS_RECONNECT_DELAY_MS 3000 // wait between reconnect attempts
+#define WATCHDOG_TIMEOUT_S 30      // reboot if loop stalls this long
 
 // ── OTA transfer constants ────────────────────────────────────────
-#define OTA_CHUNK_SIZE          512    // bytes per UART chunk to RP2040
-#define OTA_ACK_TIMEOUT_MS      4000   // wait for ACK per chunk
+#define OTA_CHUNK_SIZE 512      // bytes per UART chunk to RP2040
+#define OTA_ACK_TIMEOUT_MS 4000 // wait for ACK per chunk
 
 using namespace websockets;
 WebsocketsClient wsClient;
 
 // ── State ─────────────────────────────────────────────────────────
-unsigned long lastTelemetryMs  = 0;
-unsigned long lastHeartbeatMs  = 0;   // initialised after Wi-Fi so boot doesn't false-timeout
-bool          heartbeatValid   = false; // becomes true after FIRST heartbeat received
-bool          rp2040Heartbeat  = false;
-String        fpgaState        = "IDLE";
-bool          fpgaConfigDone   = false;
-uint32_t      packetId         = 0;
-bool          wsConnected      = false;
+unsigned long lastTelemetryMs = 0;
+unsigned long lastHeartbeatMs =
+    0; // initialised after Wi-Fi so boot doesn't false-timeout
+bool heartbeatValid = false; // becomes true after FIRST heartbeat received
+bool rp2040Heartbeat = false;
+String fpgaState = "IDLE";
+bool fpgaConfigDone = false;
+uint32_t packetId = 0;
+bool wsConnected = false;
 
 // ── Flash state (set from broker command) ─────────────────────────
 struct FlashJob {
-  bool    pending  = false;
-  String  filename = "";
-  size_t  fileSize = 0;
+  bool pending = false;
+  String filename = "";
+  size_t fileSize = 0;
 };
 FlashJob pendingFlash;
 
@@ -100,25 +101,26 @@ void onWsMessage(WebsocketsMessage msg) {
     return;
   }
 
-  const char* type = doc["type"];
-  if (!type) return;
+  const char *type = doc["type"];
+  if (!type)
+    return;
 
   if (strcmp(type, "flash_command") == 0) {
-    const char* fname = doc["filename"];
-    size_t      fsize = doc["size"] | 0;
+    const char *fname = doc["filename"];
+    size_t fsize = doc["size"] | 0;
 
     if (!fname || fsize == 0) {
-      Serial.println("[FLASH] Invalid flash_command: missing filename or size.");
+      Serial.println(
+          "[FLASH] Invalid flash_command: missing filename or size.");
       return;
     }
 
     pendingFlash.filename = String(fname);
     pendingFlash.fileSize = fsize;
-    pendingFlash.pending  = true;
+    pendingFlash.pending = true;
 
     Serial.printf("[FLASH] Job queued: %s (%zu bytes)\n", fname, fsize);
-  }
-  else if (strcmp(type, "ping") == 0) {
+  } else if (strcmp(type, "ping") == 0) {
     wsClient.send("{\"type\":\"pong\"}");
   }
 }
@@ -127,12 +129,10 @@ void onWsEvent(WebsocketsEvent event, String data) {
   if (event == WebsocketsEvent::ConnectionOpened) {
     wsConnected = true;
     Serial.println("[WS] Connected to Mission Control Broker.");
-  }
-  else if (event == WebsocketsEvent::ConnectionClosed) {
+  } else if (event == WebsocketsEvent::ConnectionClosed) {
     wsConnected = false;
     Serial.println("[WS] Connection closed.");
-  }
-  else if (event == WebsocketsEvent::GotPing) {
+  } else if (event == WebsocketsEvent::GotPing) {
     wsClient.pong();
   }
 }
@@ -153,8 +153,12 @@ bool waitForAck(unsigned long timeoutMs = OTA_ACK_TIMEOUT_MS) {
       char c = Serial1.read();
       if (c == '\n') {
         resp.trim();
-        if (resp == "ACK")  return true;
-        if (resp == "NACK") { Serial.println("[OTA] NACK received."); return false; }
+        if (resp == "ACK")
+          return true;
+        if (resp == "NACK") {
+          Serial.println("[OTA] NACK received.");
+          return false;
+        }
         resp = ""; // unexpected line — keep waiting
       } else {
         resp += c;
@@ -173,9 +177,9 @@ bool waitForAck(unsigned long timeoutMs = OTA_ACK_TIMEOUT_MS) {
  * TODO: Replace HTTP fetch with the chunked WS transfer once
  *       the sliding-window protocol is implemented on the broker.
  */
-void dispatchFlashToRP2040(const FlashJob& job) {
-  Serial.printf("[OTA] Starting flash: %s (%zu bytes)\n",
-                job.filename.c_str(), job.fileSize);
+void dispatchFlashToRP2040(const FlashJob &job) {
+  Serial.printf("[OTA] Starting flash: %s (%zu bytes)\n", job.filename.c_str(),
+                job.fileSize);
 
   // Step 1: Tell RP2040 which file is coming
   fpgaState = "RECONFIGURE";
@@ -222,7 +226,8 @@ void dispatchFlashToRP2040(const FlashJob& job) {
     esp_task_wdt_reset();
   }
 
-  Serial.println("[OTA] Transfer complete. Waiting for RP2040 to flash FPGA...");
+  Serial.println(
+      "[OTA] Transfer complete. Waiting for RP2040 to flash FPGA...");
   // RP2040 will send FPGA_STATE:USER_MODE via heartbeat path once done
 }
 
@@ -236,17 +241,17 @@ void setup() {
   Serial.println("\n[BOOT] OTA Mission Control — ESP32-S3 Nano");
 
   // Watchdog: reboot if main loop stalls
-  esp_task_wdt_config_t wdtCfg = { .timeout_ms = WATCHDOG_TIMEOUT_S * 1000,
-                                   .idle_core_mask = 0,
-                                   .trigger_panic  = true };
+  esp_task_wdt_config_t wdtCfg = {.timeout_ms = WATCHDOG_TIMEOUT_S * 1000,
+                                  .idle_core_mask = 0,
+                                  .trigger_panic = true};
   esp_task_wdt_reconfigure(&wdtCfg);
   esp_task_wdt_add(NULL);
 
   // UART1 → Shrike-lite RP2040 (dedicated pins, no USB conflict)
   Serial1.setRxBufferSize(4096);
   Serial1.begin(UART_BAUD, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
-  Serial.printf("[UART] UART1 on TX=%d RX=%d @ %d baud\n",
-                UART_TX_PIN, UART_RX_PIN, UART_BAUD);
+  Serial.printf("[UART] UART1 on TX=%d RX=%d @ %d baud\n", UART_TX_PIN,
+                UART_RX_PIN, UART_BAUD);
 
   // Wi-Fi
   Serial.printf("[WiFi] Connecting to %s", SSID);
@@ -295,16 +300,17 @@ void loop() {
   while (Serial1.available()) {
     String line = Serial1.readStringUntil('\n');
     line.trim();
-    if (line.length() == 0) continue;
+    if (line.length() == 0)
+      continue;
 
     if (line == "HEARTBEAT") {
       lastHeartbeatMs = millis();
-      heartbeatValid  = true;
+      heartbeatValid = true;
       rp2040Heartbeat = true;
 
     } else if (line.startsWith("FPGA_STATE:")) {
-      fpgaState       = line.substring(11);
-      fpgaConfigDone  = (fpgaState == "USER_MODE");
+      fpgaState = line.substring(11);
+      fpgaConfigDone = (fpgaState == "USER_MODE");
       Serial.println("[SHRIKE] State → " + fpgaState);
 
     } else if (line == "OTA_SUCCESS") {
@@ -332,19 +338,19 @@ void loop() {
     lastTelemetryMs = millis();
 
     StaticJsonDocument<512> doc;
-    doc["type"]    = "telemetry";
+    doc["type"] = "telemetry";
     doc["node_id"] = "ESP32-S3";
 
     JsonObject data = doc.createNestedObject("data");
-    data["temperature_c"]    = readCoreTempC();
-    data["supply_voltage_v"] = 3.3f;          // TODO: ADC battery read
+    data["temperature_c"] = readCoreTempC();
+    data["supply_voltage_v"] = 3.3f; // TODO: ADC battery read
     data["fpga_config_done"] = fpgaConfigDone;
-    data["fpga_state"]       = fpgaState;
-    data["rssi_dbm"]         = WiFi.RSSI();
-    data["packet_id"]        = ++packetId;
-    data["shrike_link"]      = rp2040Heartbeat ? "UP" : "DEGRADED";
+    data["fpga_state"] = fpgaState;
+    data["rssi_dbm"] = WiFi.RSSI();
+    data["packet_id"] = ++packetId;
+    data["shrike_link"] = rp2040Heartbeat ? "UP" : "DEGRADED";
     data["rp2040_heartbeat"] = rp2040Heartbeat;
-    data["uptime_s"]         = millis() / 1000;
+    data["uptime_s"] = millis() / 1000;
 
     String payload;
     serializeJson(doc, payload);

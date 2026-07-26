@@ -22,7 +22,7 @@ def hard_reset_fpga():
 
 def wait_for_ota():
     debug_print("FPGA_STATE:IDLE")
-    
+
     # 1. Flash the fallback bitstream on boot
     try:
         shrike.flash("FPGA_bitstream_MCU.bin")
@@ -31,6 +31,8 @@ def wait_for_ota():
     except Exception as e:
         debug_print(f"Boot Flash Error: {str(e)}")
 
+    # Reset heartbeat timer AFTER boot flash so a slow flash does not
+    # cause the first heartbeat to fire immediately and confuse the ESP32.
     last_heartbeat = time.ticks_ms()
 
     # 2. Main Event Loop
@@ -47,13 +49,15 @@ def wait_for_ota():
 
                 # --- STEP 1: ESP32 tells RP2040 a flash is coming ---
                 if decoded_line.startswith('FLASH_PREP:'):
-                    filename = decoded_line.split(':')[1]
+                    # FIX: split(':', 1) so filenames containing ':' are preserved
+                    filename = decoded_line.split(':', 1)[1]
                     debug_print("FPGA_STATE:CONFIGURE") # Turns dashboard badge AMBER
                     debug_print(f"Ready for file: {filename}. Send SIZE:")
 
                 # --- STEP 2: The actual file transfer begins ---
                 elif decoded_line.startswith('SIZE:'):
-                    expected_size = int(decoded_line.split(':')[1])
+                    # FIX: split(':', 1) in case size value ever has extra colons
+                    expected_size = int(decoded_line.split(':', 1)[1])
                     debug_print(f"Incoming Bitstream: {expected_size} bytes")
 
                     received_bytes = 0
@@ -76,7 +80,7 @@ def wait_for_ota():
                             # Abort if the ESP32 stops sending data
                             if time.ticks_diff(time.ticks_ms(), timeout_timer) > 8000:
                                 debug_print(f"ERROR: Timeout! Got {received_bytes} / {expected_size}")
-                                debug_print("FPGA_STATE:USER_MODE") 
+                                debug_print("FPGA_STATE:USER_MODE")
                                 break
 
                     # --- STEP 3: File received, flash the FPGA! ---
