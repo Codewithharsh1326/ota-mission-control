@@ -42,8 +42,8 @@
 #include <esp_task_wdt.h> // Watchdog
 
 // ── Credentials & endpoint ───────────────────────────────────────
-const char *SSID = "Dream 143 F-1";
-const char *PASSWORD = "harsh1326";
+const char *SSID = "*********";
+const char *PASSWORD = "********";
 const char *WS_URL = "ws://bitstream-net.me:8000/ws/hardware?node_id=ESP32-S3";
 // Base URL for the download endpoint — must NOT have a trailing slash
 const char *HTTP_SERVER_BASE = "http://bitstream-net.me:8000";
