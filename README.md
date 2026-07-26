@@ -56,9 +56,11 @@ ota-mission-control/
     │   └── index.html
     │
     └── backend/
-        ├── main.py               # FastAPI broker (WS manager, upload, flash, history)
+        ├── main.py               # FastAPI broker (WS, upload, flash, download, SQLite logging)
         ├── requirements.txt
+        ├── telemetry.db          # SQLite — auto-created on first run
         └── uploads/              # Saved bitstreams (auto-created, recycle-bin managed)
+            └── .meta/            # Sidecar flash-status JSON files (auto-created)
 ```
 
 ---
@@ -255,6 +257,12 @@ ESP32-S3  ──WS──►  /ws/hardware  ──► ConnectionManager ──►
 { "type": "flash_dispatched", "filename": "top_20240725.bit", "size": 512000, "hardware_targets": 1 }
 ```
 
+**Broker → browser: OTA result event** (status persisted to sidecar + pushed to dashboard):
+```json
+{ "type": "ota_result", "node_id": "ESP32-S3", "filename": "top.bit", "result": "success", "status": "Flashed" }
+{ "type": "ota_result", "node_id": "ESP32-S3", "filename": "top.bit", "result": "failed",  "status": "Failed",  "detail": "Incomplete transfer" }
+```
+
 **Broker → hardware: flash command (forwarded from /api/flash):**
 ```json
 { "type": "flash_command", "filename": "top_20240725.bit", "path": "uploads/...", "size": 512000 }
@@ -305,26 +313,41 @@ export const WS_BASE_URL  = `ws://${HOST}:${BACKEND_PORT}`;
 **Libraries required** (install via Arduino Library Manager):
 - `ArduinoWebsockets` by Links2004 ≥ 0.5.4
 - `ArduinoJson` ≥ 7.x
-- `esp_task_wdt` (bundled with ESP-IDF / Arduino-ESP32 core)
+- `HTTPClient` (bundled with Arduino-ESP32 core)
+- `esp_task_wdt` (bundled with Arduino-ESP32 core)
 
 **Key behaviour:**
 - Auto-connects to `ws://bitstream-net.me:8000/ws/hardware?node_id=ESP32-S3`
 - Reconnects automatically on drop (3 s back-off)
-- Streams a telemetry JSON frame every **1.2 s**
-- UART1 on **GPIO 17 (TX) / GPIO 18 (RX)** — dedicated pins, no USB conflict
-- Receives `flash_command` from broker and starts two-step OTA protocol with RP2040:
-  1. `FLASH_PREP:<filename>` → wait ACK
-  2. `SIZE:<n>` → wait ACK
-  3. Raw binary chunks → ACK per chunk
+- Streams a telemetry JSON frame every **1.2 s** (temperature, live ADC voltage, RSSI, uptime, FPGA state)
+- UART1 on **GPIO 0 (TX) / GPIO 1 (RX)** — matches user hardware wiring
 - 30-second watchdog reboot on stall
 - `temperatureRead()` auto-converts Fahrenheit → Celsius for ESP-IDF ≥ 5.x
+
+**Supply Voltage — live ADC read:**
+- Reads A7 (GPIO 14) via a resistive voltage divider
+- Two constants at the top of the sketch to configure for your hardware:
+  ```cpp
+  #define VOLTAGE_ADC_PIN  A7      // GPIO14
+  #define R1_KOHM          10.0f   // upper resistor (kΩ)
+  #define R2_KOHM          10.0f   // lower resistor (kΩ)
+  ```
+- Formula: `V_supply = (raw/4095 × 3.3) × (R1+R2)/R2`
+
+**OTA flash flow (on receiving `flash_command` from broker):**
+1. Send `FLASH_PREP:<filename>\n` to RP2040 → wait `ACK`
+2. Send `SIZE:<n>\n` → wait `ACK`
+3. `GET http://bitstream-net.me:8000/api/download/<filename>` — stream response body to RP2040 in 512 B chunks → wait `ACK` per chunk
+4. On completion: send `{ type: "ota_result", result: "success"|"failed", filename }` to broker
+
+**Security note:** Runs on a trusted private network. In-band AES-256-GCM is not implemented; add mbedTLS if open-internet deployment is required.
 
 **UART to Shrike-lite wiring:**
 
 | ESP32-S3 Pin | Direction | RP2040 Pin |
 |---|---|---|
-| GPIO 17 (TX1) | → | GPIO 29 (RX0) |
-| GPIO 18 (RX1) | ← | GPIO 28 (TX0) |
+| GPIO 0 (TX1) | → | GPIO 29 (RX0) |
+| GPIO 1 (RX1) | ← | GPIO 28 (TX0) |
 
 ---
 
@@ -340,8 +363,8 @@ export const WS_BASE_URL  = `ws://${HOST}:${BACKEND_PORT}`;
 
 | RP2040 Pin | Signal | Connected to |
 |---|---|---|
-| GPIO 28 (TX0) | TX → ESP32 | ESP32 GPIO 18 (RX1) |
-| GPIO 29 (RX0) | RX ← ESP32 | ESP32 GPIO 17 (TX1) |
+| GPIO 28 (TX0) | TX → ESP32 | ESP32 GPIO 1 (RX1) |
+| GPIO 29 (RX0) | RX ← ESP32 | ESP32 GPIO 0 (TX1) |
 
 **FPGA reset pin:** GPIO 14 (active-LOW pulse)
 
@@ -396,23 +419,35 @@ The History table stays in sync automatically because it reads the filesystem on
 
 ---
 
-## OTA Upload Pipeline — Future Integration Points
-
-The `/upload` endpoint in `main.py` contains clearly marked `# TODO:` placeholders:
+## OTA Upload Pipeline
 
 ```
 [Browser] ──POST multipart──► /upload
   1. ✅ Validate extension (.bit / .bin)
   2. ✅ Save to uploads/{timestamp}_{filename}
-  3. 🔲 TODO: AES-256-GCM encrypt payload before transit
-  4. 🔲 TODO: Sliding-window chunked transfer to ESP32
-           └─ Window: 512 bytes/chunk
-           └─ Seq number + CRC32 per chunk
-           └─ Hardware ACK/NACK → 3× retry on NACK
-           └─ Resume pointer saved on disconnection
-  5. ✅ Broadcast upload_complete event to browser WS clients
-  6. ✅ Trigger recycle bin cleanup (background task)
+  3. ✅ Broadcast upload_complete event to browser WS clients
+  4. ✅ Trigger recycle bin cleanup (background task)
+
+[Browser] ──POST /api/flash?filename=──► Broker
+  1. ✅ Verify file exists in uploads/
+  2. ✅ Write sidecar status → "Flashing" (uploads/.meta/<filename>.json)
+  3. ✅ Forward flash_command to ESP32 over /ws/hardware
+  4. ✅ Broadcast flash_dispatched to all browser dashboards
+
+[ESP32] ──GET /api/download/<filename>──► Broker HTTP
+  1. ✅ Stream response body to RP2040 over UART in 512 B chunks (ACK-gated)
+  2. ✅ Send ota_result { result: "success"|"failed" } back to broker via WS
+
+[Broker] receives ota_result
+  1. ✅ Write sidecar status → "Flashed" or "Failed"
+  2. ✅ Broadcast ota_result event to all browser dashboards
+  3. ✅ Log each telemetry frame to SQLite (telemetry.db)
 ```
+
+> **Payload encryption:** The system runs on a trusted private network with TLS at the
+> server boundary. In-band AES-256-GCM is not implemented. To add it, encrypt the
+> `FileResponse` bytes in `main.py` before serving, and add an `mbedTLS` AES-GCM
+> decrypt step in the ESP32 HTTP stream loop before forwarding to UART.
 
 ---
 
@@ -476,5 +511,6 @@ For Shrike-lite telemetry fields, include `shrike_link`, `fpga_config_done`, and
 | v1.4 | Hardware-only mode — removed all mock/demo telemetry. Cards show `--` until real frames arrive. Waveform flat until data. |
 | v1.5 | **Hardware decoupling** — broker tracks `esp32_online` flag. Browser receives `system_state` snapshot + `hw_connection` events. `HardwareStatus` driven by broker events (not browser WS). Shrike-lite driven by `rp2040_heartbeat`. Build: ✓ 1786 modules · 532ms |
 | v1.6 | **Two-stage flash pipeline** — `OTAUploadZone` → "Upload to Server (STEP 1)". `BitstreamHistory` → "Available Bitstreams (STEP 2)": radio row selection, Flash action bar, `POST /api/flash` endpoint. Build: ✓ 1786 modules · 626ms |
-| v1.7 | **Firmware hardening** — ESP32: fixed UART1 pins (17/18), watchdog, onEvent callback, °F→°C fix, ACK/NACK OTA protocol, heartbeat boot guard. RP2040: `split(':', 1)` colon-safe filename parse, heartbeat timer reset after boot flash. GitHub repo published: `Codewithharsh1326/ota-mission-control`. |
-| v1.8 | **Real file transfer implemented** — Added `GET /api/download/{filename}` endpoint to backend (serves raw binary, path-traversal blocked). ESP32 firmware now uses `HTTPClient` to stream bitstream from broker → Serial1 UART → RP2040 in `OTA_CHUNK_SIZE` (512 B) chunks with ACK gate per chunk. Transfer is verified by byte count; incomplete transfers set FPGA state back to IDLE. |
+| v1.7 | **Firmware hardening** — ESP32: UART pins (0/1), watchdog, onEvent callback, °F→°C fix, ACK/NACK OTA protocol, heartbeat boot guard. RP2040: `split(':', 1)` colon-safe parse, heartbeat reset after boot flash. GitHub repo: `Codewithharsh1326/ota-mission-control`. |
+| v1.8 | **Real file transfer** — `GET /api/download/{filename}` backend endpoint (path-traversal blocked). ESP32 uses `HTTPClient` to stream bitstream → Serial1 UART → RP2040 in 512 B chunks with ACK gate per chunk. |
+| v1.9 | **All TODOs completed** — (1) Removed dead ACK/NACK WS code from broker. (2) Live ADC supply voltage on A7/GPIO14 with configurable R1/R2 voltage divider. (3) AES TODO replaced with architecture note (trusted network). (4) SQLite telemetry logging (`telemetry.db`) — every frame persisted with timestamp, node, packet_id, temp, voltage, RSSI, FPGA state, raw JSON. (5) Per-file flash status persistence via sidecar `uploads/.meta/<filename>.json` — survives page refresh; states: `Ready` → `Flashing` → `Flashed` / `Failed`. ESP32 sends `ota_result` to broker; broker writes sidecar + broadcasts `ota_result` event to dashboard. |
