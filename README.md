@@ -24,31 +24,41 @@ During development, Vite proxies all `/upload`, `/api`, and `/ws` requests autom
 ## Project Structure
 
 ```
-web/
-├── frontend/                          # Vite + React + Tailwind CSS
-│   ├── src/
-│   │   ├── App.jsx                    # Root: 3-row CSS Grid (100vh, no scroll)
-│   │   ├── index.css                  # Dark theme, animations, glassmorphism, custom scrollbars
-│   │   ├── components/
-│   │   │   ├── HardwareStatus.jsx     # ESP32-S3 card + Shrike-lite MPSoC card (RP2040 + FPGA)
-│   │   │   ├── TelemetryPanel.jsx     # Live WebSocket telemetry + SVG waveform + frame log
-│   │   │   ├── OTAUploadZone.jsx      # Drag-and-drop .bit/.bin upload with XHR progress
-│   │   │   ├── BitstreamHistory.jsx   # Disk-synced scrollable history table (5s poll)
-│   │   │   ├── StatusBadge.jsx        # Reusable status pill (Connected/Halted/Resumed/etc.)
-│   │   │   └── RSSIIndicator.jsx      # 5-bar animated Wi-Fi RSSI signal visualizer
-│   │   ├── hooks/
-│   │   │   ├── useWebSocket.js        # Persistent WS with auto-reconnect + heartbeat ping
-│   │   │   └── useTelemetry.js        # Rolling 50-frame buffer + demo data generator
-│   │   ├── utils/
-│   │   │       └── formatters.js          # Bytes, duration, timestamp, uptime, RSSI formatters
-│   │   └── config.js                      # Dynamic API routing — auto-detects dev vs production
-│   ├── vite.config.js                 # @tailwindcss/vite plugin + dev proxy to :8000
-│   └── index.html                     # SEO meta description + Google Fonts preconnect
+ota-mission-control/
+├── README.md
+├── .gitignore
 │
-└── backend/
-    ├── main.py                        # FastAPI broker (CORS, WS manager, upload, history, recycle bin)
-    ├── requirements.txt               # fastapi, uvicorn, python-multipart, aiofiles, websockets
-    └── uploads/                       # Saved bitstreams (auto-created, recycle-bin managed)
+├── esp32_ws/
+│   └── esp32_ws.ino              # ESP32-S3 Arduino firmware
+│
+├── Micro_py/
+│   └── main.py                   # RP2040 MicroPython firmware (Shrike-lite)
+│
+└── web/
+    ├── frontend/                 # Vite + React + Tailwind CSS
+    │   ├── src/
+    │   │   ├── App.jsx           # Root: 3-row CSS Grid (100vh, no scroll)
+    │   │   ├── index.css         # Dark theme, glassmorphism, animations
+    │   │   ├── config.js         # Dynamic API routing (window.location.hostname)
+    │   │   ├── components/
+    │   │   │   ├── HardwareStatus.jsx     # ESP32-S3 + Shrike-lite MPSoC cards
+    │   │   │   ├── TelemetryPanel.jsx     # Live WS telemetry, SVG waveform, frame log
+    │   │   │   ├── OTAUploadZone.jsx      # Drag-and-drop .bit/.bin upload (Step 1)
+    │   │   │   ├── BitstreamHistory.jsx   # Radio select + Flash to ESP32 (Step 2)
+    │   │   │   ├── StatusBadge.jsx        # Reusable status pill component
+    │   │   │   └── RSSIIndicator.jsx      # 5-bar animated Wi-Fi RSSI visualizer
+    │   │   ├── hooks/
+    │   │   │   ├── useWebSocket.js        # Persistent WS with auto-reconnect
+    │   │   │   └── useTelemetry.js        # Rolling frame buffer + hw_connection handler
+    │   │   └── utils/
+    │   │       └── formatters.js          # Bytes, duration, uptime, RSSI formatters
+    │   ├── vite.config.js
+    │   └── index.html
+    │
+    └── backend/
+        ├── main.py               # FastAPI broker (WS manager, upload, flash, history)
+        ├── requirements.txt
+        └── uploads/              # Saved bitstreams (auto-created, recycle-bin managed)
 ```
 
 ---
@@ -287,6 +297,74 @@ export const WS_BASE_URL  = `ws://${HOST}:${BACKEND_PORT}`;
 
 ---
 
+## Firmware
+
+### ESP32-S3 Nano — [`esp32_ws/esp32_ws.ino`](esp32_ws/esp32_ws.ino)
+
+**Libraries required** (install via Arduino Library Manager):
+- `ArduinoWebsockets` by Links2004 ≥ 0.5.4
+- `ArduinoJson` ≥ 7.x
+- `esp_task_wdt` (bundled with ESP-IDF / Arduino-ESP32 core)
+
+**Key behaviour:**
+- Auto-connects to `ws://bitstream-net.me:8000/ws/hardware?node_id=ESP32-S3`
+- Reconnects automatically on drop (3 s back-off)
+- Streams a telemetry JSON frame every **1.2 s**
+- UART1 on **GPIO 17 (TX) / GPIO 18 (RX)** — dedicated pins, no USB conflict
+- Receives `flash_command` from broker and starts two-step OTA protocol with RP2040:
+  1. `FLASH_PREP:<filename>` → wait ACK
+  2. `SIZE:<n>` → wait ACK
+  3. Raw binary chunks → ACK per chunk
+- 30-second watchdog reboot on stall
+- `temperatureRead()` auto-converts Fahrenheit → Celsius for ESP-IDF ≥ 5.x
+
+**UART to Shrike-lite wiring:**
+
+| ESP32-S3 Pin | Direction | RP2040 Pin |
+|---|---|---|
+| GPIO 17 (TX1) | → | GPIO 29 (RX0) |
+| GPIO 18 (RX1) | ← | GPIO 28 (TX0) |
+
+---
+
+### Shrike-lite RP2040 — [`Micro_py/main.py`](Micro_py/main.py)
+
+**Runtime:** MicroPython on RP2040 (Vicharak Shrike-lite board)
+
+**Libraries used** (provided by Vicharak for Shrike-lite):
+- `shrike` — FPGA configuration API (`shrike.flash(filename)` programs bitstream)
+- `machine` — standard MicroPython hardware abstraction
+
+**UART assignment (do not change):**
+
+| RP2040 Pin | Signal | Connected to |
+|---|---|---|
+| GPIO 28 (TX0) | TX → ESP32 | ESP32 GPIO 18 (RX1) |
+| GPIO 29 (RX0) | RX ← ESP32 | ESP32 GPIO 17 (TX1) |
+
+**FPGA reset pin:** GPIO 14 (active-LOW pulse)
+
+**Key behaviour:**
+- On boot: flashes `FPGA_bitstream_MCU.bin` (factory default), resets FPGA, reports `FPGA_STATE:USER_MODE`
+- If boot bitstream missing: reports `FPGA_STATE:IDLE` and waits for OTA
+- Sends `HEARTBEAT` every **4 s** (ESP32 degrades link after 5 s silence)
+- Listens for OTA protocol from ESP32:
+  1. `FLASH_PREP:<filename>` → ACK, enter CONFIGURE state
+  2. `SIZE:<n>` → ACK, open `ota_update.bin` for writing
+  3. Raw chunks (256 B) → ACK each; NACK + abort on 8 s timeout
+  4. When all bytes received: `shrike.flash("ota_update.bin")` → hard reset → `OTA_SUCCESS` + `FPGA_STATE:USER_MODE`
+
+**FPGA state machine reported via UART:**
+
+| State | Dashboard badge | Meaning |
+|-------|----------------|----------|
+| `IDLE` | Halted (amber) | Waiting for bitstream |
+| `CONFIGURE` | Halted (amber) | Receiving OTA data |
+| `USER_MODE` | Connected (green) | FPGA running user design |
+| `RECONFIGURE` | Halted (purple) | Flash sequence initiated |
+
+---
+
 ## CORS Configuration
 
 
@@ -385,28 +463,6 @@ For Shrike-lite telemetry fields, include `shrike_link`, `fpga_config_done`, and
 ---
 
 
-## Connecting Your ESP32-S3
-
-Point the ESP32 firmware to connect WebSocket to:
-```
-ws://<server-ip>:8000/ws/hardware?node_id=ESP32-S3
-```
-
-The broker will immediately notify all open browser dashboards that the node came online, and the Hardware Status panel will switch from `Disconnected` → `Connected` with a breathing glow animation.
-
-
- 
-## Placeholders for Future Integration
-
-In [main.py](file:///home/harsh/Documents/OTA_Server/DCN/web/backend/main.py) the upload pipeline has clearly marked `# TODO:` blocks for:
-
-1. **AES-256-GCM encryption** of payload before transit
-2. **Sliding-window chunked transfer** protocol:
-   - 512-byte window, sequence numbers, CRC32 per chunk
-   - Hardware ACK/NACK handling with 3× retry
-   - Resume pointer on disconnection
-
-
 
 ## Changelog
 
@@ -418,4 +474,5 @@ In [main.py](file:///home/harsh/Documents/OTA_Server/DCN/web/backend/main.py) th
 | v1.3 | Added `config.js` — `API_BASE_URL` and `WS_BASE_URL` built from `window.location.hostname:8000` |
 | v1.4 | Hardware-only mode — removed all mock/demo telemetry. Cards show `--` until real frames arrive. Waveform flat until data. |
 | v1.5 | **Hardware decoupling** — broker tracks `esp32_online` flag. Browser receives `system_state` snapshot + `hw_connection` events. `HardwareStatus` driven by broker events (not browser WS). Shrike-lite driven by `rp2040_heartbeat`. Build: ✓ 1786 modules · 532ms |
-| v1.6 | **Two-stage flash pipeline** — clear separation between uploading to server and flashing to ESP32. `OTAUploadZone` retitled "Upload to Server (STEP 1 OF 2)". `BitstreamHistory` replaced by "Available Bitstreams (STEP 2 OF 2)": radio row selection, Flash action bar with `POST /api/flash`, state machine (idle → sending → dispatched ✓ / failed ✗). New backend endpoint `POST /api/flash?filename=` verifies file, forwards `flash_command` to hardware WS, broadcasts `flash_dispatched` to browsers. Build: ✓ 1786 modules · 626ms |
+| v1.6 | **Two-stage flash pipeline** — `OTAUploadZone` → "Upload to Server (STEP 1)". `BitstreamHistory` → "Available Bitstreams (STEP 2)": radio row selection, Flash action bar, `POST /api/flash` endpoint. Build: ✓ 1786 modules · 626ms |
+| v1.7 | **Firmware hardening** — ESP32: fixed UART1 pins (17/18), watchdog, onEvent callback, °F→°C fix, ACK/NACK OTA protocol, heartbeat boot guard. RP2040: `split(':', 1)` colon-safe filename parse, heartbeat timer reset after boot flash. GitHub repo published: `Codewithharsh1326/ota-mission-control`. |
