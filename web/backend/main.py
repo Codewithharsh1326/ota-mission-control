@@ -397,6 +397,43 @@ async def flash_bitstream(filename: str):
     }
 
 
+# ---------------------------------------------------------------------------
+# GET /api/download/{filename} — Serve bitstream file to ESP32 over HTTP
+# ---------------------------------------------------------------------------
+from fastapi.responses import FileResponse
+
+@app.get("/api/download/{filename}", tags=["OTA"])
+async def download_bitstream(filename: str):
+    """
+    Serves a stored bitstream file as a raw binary response so the
+    ESP32-S3 can download it over HTTP and stream it to the RP2040
+    via UART for FPGA flashing.
+
+    The ESP32 firmware calls:
+      GET http://<broker>:8000/api/download/<filename>
+    and streams the response body in 512-byte chunks directly to
+    the RP2040 over Serial1 (UART).
+
+    Security: only filenames that exist inside uploads/ are served.
+    Path traversal is blocked by os.path.basename().
+    """
+    safe_name = os.path.basename(filename)   # block path traversal
+    file_path = os.path.join(UPLOAD_DIR, safe_name)
+
+    if not os.path.isfile(file_path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"File '{safe_name}' not found in uploads directory."
+        )
+
+    logger.info(f"Serving bitstream download: '{safe_name}' to ESP32")
+    return FileResponse(
+        path=file_path,
+        media_type="application/octet-stream",
+        filename=safe_name,
+    )
+
+
 # ===========================================================================
 # WEBSOCKET ENDPOINTS
 # ===========================================================================

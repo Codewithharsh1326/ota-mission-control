@@ -206,6 +206,7 @@ Replaces the old "Bitstream History" panel. Keeps a clear two-stage separation:
 | `POST` | `/upload` | Receive `.bit`/`.bin` multipart file, save with timestamp prefix, broadcast `upload_complete` to all browser WS clients |
 | `GET`  | `/api/history` | Live `os.stat()` scan of `uploads/` — disk-synced, no in-memory cache |
 | `POST` | `/api/flash?filename=<file>` | Trigger flash of server-side bitstream to ESP32 — verifies file exists, forwards `flash_command` over hardware WS, returns `{ status, filename, hardware_targets }` |
+| `GET`  | `/api/download/{filename}` | Serve raw bitstream binary to ESP32 over HTTP — ESP32 calls this then streams bytes to RP2040 over UART |
 | `WS`   | `/ws/telemetry` | Browser dashboard WebSocket — receives telemetry, receives broker events |
 | `WS`   | `/ws/hardware?node_id=ESP32-S3` | Hardware node WebSocket — pushes telemetry frames, receives OTA flash commands |
 
@@ -476,3 +477,4 @@ For Shrike-lite telemetry fields, include `shrike_link`, `fpga_config_done`, and
 | v1.5 | **Hardware decoupling** — broker tracks `esp32_online` flag. Browser receives `system_state` snapshot + `hw_connection` events. `HardwareStatus` driven by broker events (not browser WS). Shrike-lite driven by `rp2040_heartbeat`. Build: ✓ 1786 modules · 532ms |
 | v1.6 | **Two-stage flash pipeline** — `OTAUploadZone` → "Upload to Server (STEP 1)". `BitstreamHistory` → "Available Bitstreams (STEP 2)": radio row selection, Flash action bar, `POST /api/flash` endpoint. Build: ✓ 1786 modules · 626ms |
 | v1.7 | **Firmware hardening** — ESP32: fixed UART1 pins (17/18), watchdog, onEvent callback, °F→°C fix, ACK/NACK OTA protocol, heartbeat boot guard. RP2040: `split(':', 1)` colon-safe filename parse, heartbeat timer reset after boot flash. GitHub repo published: `Codewithharsh1326/ota-mission-control`. |
+| v1.8 | **Real file transfer implemented** — Added `GET /api/download/{filename}` endpoint to backend (serves raw binary, path-traversal blocked). ESP32 firmware now uses `HTTPClient` to stream bitstream from broker → Serial1 UART → RP2040 in `OTA_CHUNK_SIZE` (512 B) chunks with ACK gate per chunk. Transfer is verified by byte count; incomplete transfers set FPGA state back to IDLE. |

@@ -30,6 +30,7 @@
 
 #include <ArduinoJson.h>
 #include <ArduinoWebsockets.h>
+#include <HTTPClient.h>  // For downloading bitstream from broker
 #include <WiFi.h>
 #include <esp_task_wdt.h> // Watchdog
 
@@ -37,10 +38,12 @@
 const char *SSID = "Dream 143 F-1";
 const char *PASSWORD = "harsh1326";
 const char *WS_URL = "ws://bitstream-net.me:8000/ws/hardware?node_id=ESP32-S3";
+// Base URL for the download endpoint — must NOT have a trailing slash
+const char *HTTP_SERVER_BASE = "http://bitstream-net.me:8000";
 
 // ── UART1 pins (dedicated, do NOT conflict with USB-serial) ──────
-#define UART_TX_PIN 43
-#define UART_RX_PIN 44
+#define UART_RX_PIN 0
+#define UART_TX_PIN 1
 #define UART_BAUD 115200
 
 // ── Timing constants ─────────────────────────────────────────────
@@ -171,17 +174,20 @@ bool waitForAck(unsigned long timeoutMs = OTA_ACK_TIMEOUT_MS) {
 }
 
 /**
- * Initiates the two-step OTA transfer to the RP2040.
- * The file content must be fetched from the broker server.
+ * Downloads the bitstream from the broker over HTTP and streams it
+ * to the RP2040 over Serial1 (UART) in OTA_CHUNK_SIZE byte chunks.
  *
- * TODO: Replace HTTP fetch with the chunked WS transfer once
- *       the sliding-window protocol is implemented on the broker.
+ * Protocol with RP2040 (must match Micro_py/main.py):
+ *   1. FLASH_PREP:<filename>\n  → wait ACK
+ *   2. SIZE:<n_bytes>\n         → wait ACK
+ *   3. <raw binary chunks>      → ACK per chunk
+ *   After all chunks: RP2040 sends OTA_SUCCESS + FPGA_STATE:USER_MODE
  */
 void dispatchFlashToRP2040(const FlashJob &job) {
   Serial.printf("[OTA] Starting flash: %s (%zu bytes)\n", job.filename.c_str(),
                 job.fileSize);
 
-  // Step 1: Tell RP2040 which file is coming
+  // ── Step 1: FLASH_PREP ──────────────────────────────────────────
   fpgaState = "RECONFIGURE";
   Serial1.print("FLASH_PREP:");
   Serial1.println(job.filename);
@@ -191,8 +197,9 @@ void dispatchFlashToRP2040(const FlashJob &job) {
     fpgaState = "IDLE";
     return;
   }
+  Serial.println("[OTA] FLASH_PREP acknowledged.");
 
-  // Step 2: Send size header so RP2040 allocates buffer
+  // ── Step 2: Send SIZE header ────────────────────────────────────
   Serial1.print("SIZE:");
   Serial1.println(job.fileSize);
 
@@ -201,34 +208,88 @@ void dispatchFlashToRP2040(const FlashJob &job) {
     fpgaState = "IDLE";
     return;
   }
+  Serial.println("[OTA] SIZE acknowledged. Starting HTTP download…");
 
-  // Step 3: Transfer raw binary in chunks
-  // TODO: fetch actual file bytes from broker HTTP endpoint
-  //       GET http://bitstream-net.me:8000/uploads/<filename>
-  //       then stream them here chunk by chunk.
+  // ── Step 3: Fetch file from broker and forward over UART ────────
   //
-  // Placeholder: send zeroed buffer so the protocol path is exercised.
+  //  GET http://<broker>:8000/api/download/<filename>
+  //  Stream response body → Serial1 in OTA_CHUNK_SIZE chunks
+  //  RP2040 ACKs each chunk before we send the next one.
+
+  HTTPClient http;
+  String url = String(HTTP_SERVER_BASE) + "/api/download/" + job.filename;
+  Serial.println("[OTA] Fetching: " + url);
+
+  http.begin(url);
+  http.setTimeout(10000); // 10 s connect/read timeout
+
+  int httpCode = http.GET();
+  if (httpCode != HTTP_CODE_200) {
+    Serial.printf("[OTA] HTTP GET failed: %d — %s\n",
+                  httpCode, http.errorToString(httpCode).c_str());
+    http.end();
+    fpgaState = "IDLE";
+    return;
+  }
+
+  int contentLength = http.getSize(); // -1 if server uses chunked encoding
+  Serial.printf("[OTA] HTTP 200 OK  Content-Length: %d\n", contentLength);
+
+  WiFiClient *stream = http.getStreamPtr();
   size_t sent = 0;
-  uint8_t chunk[OTA_CHUNK_SIZE];
-  memset(chunk, 0xFF, sizeof(chunk));
+  uint8_t chunkBuf[OTA_CHUNK_SIZE];
 
-  while (sent < job.fileSize) {
-    size_t toSend = min((size_t)OTA_CHUNK_SIZE, job.fileSize - sent);
-    Serial1.write(chunk, toSend);
-    sent += toSend;
+  while (http.connected() && sent < job.fileSize) {
+    // How many bytes are we expecting in this chunk?
+    size_t toRead = min((size_t)OTA_CHUNK_SIZE, job.fileSize - sent);
 
+    // Wait until the stream has enough bytes (or a short timeout)
+    unsigned long fetchStart = millis();
+    while ((size_t)stream->available() < toRead) {
+      if (millis() - fetchStart > 5000) {
+        Serial.printf("[OTA] Stream stalled at byte %zu. Aborting.\n", sent);
+        http.end();
+        fpgaState = "IDLE";
+        return;
+      }
+      delay(1);
+    }
+
+    size_t bytesRead = stream->readBytes(chunkBuf, toRead);
+    if (bytesRead == 0) {
+      Serial.println("[OTA] Stream read returned 0. Aborting.");
+      break;
+    }
+
+    // Forward this chunk to the RP2040 over UART
+    Serial1.write(chunkBuf, bytesRead);
+    sent += bytesRead;
+
+    Serial.printf("[OTA] Chunk sent: %zu / %zu bytes\n", sent, job.fileSize);
+
+    // Wait for RP2040 to ACK this chunk before sending the next
     if (!waitForAck(OTA_ACK_TIMEOUT_MS)) {
       Serial.printf("[OTA] Chunk ACK failed at byte %zu. Aborting.\n", sent);
+      http.end();
       fpgaState = "IDLE";
       return;
     }
 
-    esp_task_wdt_reset();
+    esp_task_wdt_reset(); // keep watchdog happy during long transfer
   }
 
-  Serial.println(
-      "[OTA] Transfer complete. Waiting for RP2040 to flash FPGA...");
-  // RP2040 will send FPGA_STATE:USER_MODE via heartbeat path once done
+  http.end();
+
+  if (sent == job.fileSize) {
+    Serial.printf("[OTA] Transfer complete: %zu bytes sent to RP2040.\n", sent);
+    Serial.println("[OTA] Waiting for RP2040 to confirm FPGA flash…");
+    // RP2040 will send OTA_SUCCESS then FPGA_STATE:USER_MODE over UART
+    // — picked up in the main loop UART reader.
+  } else {
+    Serial.printf("[OTA] Transfer incomplete: %zu / %zu bytes.\n",
+                  sent, job.fileSize);
+    fpgaState = "IDLE";
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════
