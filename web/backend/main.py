@@ -28,6 +28,7 @@ import time
 import glob
 import asyncio
 import json
+import sqlite3
 import logging
 from typing import Optional
 from datetime import datetime
@@ -75,12 +76,99 @@ app.add_middleware(
 # Constants & Directory Setup
 # ---------------------------------------------------------------------------
 UPLOAD_DIR = "uploads"
+META_DIR   = "uploads/.meta"   # sidecar flash-status JSON files
 MAX_FILES = 5           # Recycle bin: keep only last 5 bitstreams
 MAX_AGE_DAYS = 5        # Recycle bin: delete files older than 5 days
 ALLOWED_EXTENSIONS = {".bit", ".bin"}
+TELEMETRY_DB = "telemetry.db"  # SQLite database for historical telemetry
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(META_DIR, exist_ok=True)
 logger.info(f"Upload directory ready: {os.path.abspath(UPLOAD_DIR)}")
+
+# ---------------------------------------------------------------------------
+# SQLite — Telemetry History
+# ---------------------------------------------------------------------------
+def init_telemetry_db():
+    """Create the telemetry table if it does not already exist."""
+    conn = sqlite3.connect(TELEMETRY_DB)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS telemetry (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            broker_rx_ts  REAL    NOT NULL,
+            node_id       TEXT    NOT NULL,
+            packet_id     INTEGER,
+            temperature_c REAL,
+            voltage_v     REAL,
+            rssi_dbm      INTEGER,
+            fpga_state    TEXT,
+            uptime_s      INTEGER,
+            raw_json      TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+    logger.info(f"Telemetry DB ready: {os.path.abspath(TELEMETRY_DB)}")
+
+init_telemetry_db()
+
+
+def log_telemetry(frame: dict):
+    """Insert one telemetry frame into the SQLite DB (fire-and-forget)."""
+    try:
+        data = frame.get("data", {})
+        conn = sqlite3.connect(TELEMETRY_DB)
+        conn.execute("""
+            INSERT INTO telemetry
+              (broker_rx_ts, node_id, packet_id, temperature_c,
+               voltage_v, rssi_dbm, fpga_state, uptime_s, raw_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            frame.get("broker_rx_ts", time.time()),
+            frame.get("node_id", "unknown"),
+            data.get("packet_id"),
+            data.get("temperature_c"),
+            data.get("supply_voltage_v"),
+            data.get("rssi_dbm"),
+            data.get("fpga_state"),
+            data.get("uptime_s"),
+            json.dumps(frame),
+        ))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.warning(f"Telemetry DB write failed: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Sidecar helpers — per-file flash status persisted to .meta/<filename>.json
+# ---------------------------------------------------------------------------
+
+def _meta_path(filename: str) -> str:
+    return os.path.join(META_DIR, filename + ".json")
+
+
+def read_flash_status(filename: str) -> str:
+    """Return the persisted flash status for a file, defaulting to 'Ready'."""
+    try:
+        with open(_meta_path(filename)) as f:
+            return json.load(f).get("status", "Ready")
+    except (FileNotFoundError, json.JSONDecodeError):
+        return "Ready"
+
+
+def write_flash_status(filename: str, status: str, detail: str = ""):
+    """Persist flash status to a sidecar JSON file."""
+    try:
+        with open(_meta_path(filename), "w") as f:
+            json.dump({
+                "filename": filename,
+                "status": status,
+                "detail": detail,
+                "updated_at": datetime.now().isoformat(),
+            }, f)
+    except Exception as e:
+        logger.warning(f"Could not write flash status for '{filename}': {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -316,13 +404,17 @@ async def get_history():
         try:
             stats = os.stat(filepath)
             mtime = datetime.fromtimestamp(stats.st_mtime)
+            fname = os.path.basename(filepath)
+            # Skip sidecar meta files if they ever appear in the glob
+            if fname.endswith(".json"):
+                continue
             history.append({
-                "filename": os.path.basename(filepath),
+                "filename": fname,
                 "size": stats.st_size,
                 "size_human": format_bytes(stats.st_size),
                 "timestamp": mtime.strftime("%Y-%m-%d %H:%M:%S"),
                 "path": filepath,
-                "status": "Ready",  # TODO: Track flash status in a sidecar .json file
+                "status": read_flash_status(fname),  # persisted sidecar status
             })
         except FileNotFoundError:
             # File may have been deleted by cleanup between glob and stat
@@ -369,14 +461,18 @@ async def flash_bitstream(filename: str):
         f"to {len(manager.hardware_clients)} hardware node(s)"
     )
 
+    # Mark file as 'Flashing' in the sidecar — dashboard reflects this immediately
+    write_flash_status(filename, "Flashing", "Flash command dispatched to ESP32")
+
     # Forward flash command to all connected hardware nodes
+    # The ESP32 downloads the bitstream via GET /api/download/<filename>
+    # and streams it to the RP2040 over UART (no WS chunking needed).
     await manager.send_to_hardware({
         "type": "flash_command",
         "filename": filename,
         "path": file_path,
         "size": file_size,
         "timestamp": datetime.now().isoformat(),
-        # TODO: Replace with actual chunked AES-256-GCM transfer
     })
 
     # Notify all browser dashboards that a flash was dispatched
@@ -468,12 +564,13 @@ async def websocket_telemetry(websocket: WebSocket):
 
                 elif msg_type == "flash_command":
                     # Browser is requesting a flash → forward to hardware
+                    # Note: prefer using POST /api/flash which also writes the
+                    # sidecar status. This path is kept for direct WS callers.
                     logger.info(f"Flash command received: {msg.get('filename')}")
                     await manager.send_to_hardware({
                         "type": "flash_command",
                         "filename": msg.get("filename"),
                         "target": msg.get("target", "ESP32"),
-                        # TODO: Attach AES-encrypted chunk stream here
                     })
 
                 elif msg_type == "hw_status_request":
@@ -537,18 +634,28 @@ async def websocket_hardware(websocket: WebSocket, node_id: str = Query(default=
 
                 if frame.get("type") == "telemetry":
                     logger.debug(f"Telemetry from [{node_id}]: pkt={frame.get('data', {}).get('packet_id')}")
-                    # Broadcast live telemetry to all browser dashboards
+                    # Log to SQLite for historical waveform / data analysis
+                    log_telemetry(frame)
+                    # Broadcast live frame to all browser dashboards
                     await manager.broadcast_to_browsers(frame)
 
-                elif frame.get("type") == "ack":
-                    # Hardware acknowledging a received OTA chunk
-                    # TODO: Update chunk sliding-window state machine here
-                    logger.info(f"OTA ACK from [{node_id}]: chunk={frame.get('chunk_id')}")
-
-                elif frame.get("type") == "nack":
-                    # Hardware requesting chunk retransmission
-                    # TODO: Retransmit chunk from buffer (up to 3 retries)
-                    logger.warning(f"OTA NACK from [{node_id}]: chunk={frame.get('chunk_id')} — retransmit queued")
+                elif frame.get("type") == "ota_result":
+                    # ESP32 reports final outcome of a flash operation
+                    result  = frame.get("result", "unknown")   # "success" | "failed"
+                    fname   = frame.get("filename", "")
+                    detail  = frame.get("detail", "")
+                    status  = "Flashed" if result == "success" else "Failed"
+                    if fname:
+                        write_flash_status(fname, status, detail)
+                    logger.info(f"OTA result from [{node_id}]: {status} — {fname}")
+                    await manager.broadcast_to_browsers({
+                        "type":     "ota_result",
+                        "node_id":  node_id,
+                        "filename": fname,
+                        "result":   result,
+                        "status":   status,
+                        "detail":   detail,
+                    })
 
             except json.JSONDecodeError:
                 logger.warning(f"Non-JSON from hardware [{node_id}]: {raw[:100]}")

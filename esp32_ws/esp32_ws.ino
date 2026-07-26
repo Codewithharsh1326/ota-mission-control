@@ -10,21 +10,28 @@
  *   - Maintains a persistent, auto-reconnecting WebSocket to
  *     ws://<broker>:8000/ws/hardware?node_id=ESP32-S3
  *   - Streams a telemetry JSON frame every TELEMETRY_INTERVAL_MS
- *   - Listens for flash_command from the broker and forwards a
- *     two-step protocol to the RP2040 over UART1:
- *       1.  FLASH_PREP:<filename>\n   — RP2040 enters CONFIGURE
- *       2.  SIZE:<n_bytes>\n         — RP2040 opens file buffer
- *       3.  <raw bytes>              — chunked binary transfer
+ *   - Listens for flash_command from the broker and:
+ *       1. Sends FLASH_PREP:<filename> to RP2040, waits ACK
+ *       2. Sends SIZE:<n_bytes>, waits ACK
+ *       3. HTTP GETs bitstream from /api/download/<filename>
+ *          and streams it to RP2040 in OTA_CHUNK_SIZE chunks, ACK-gated
+ *       4. Sends ota_result back to broker (success / failed)
  *   - Monitors RP2040 heartbeat: marks link DEGRADED if silent
  *     for more than HEARTBEAT_TIMEOUT_MS
  *
- * Tested libraries:
- *   ArduinoWebsockets  (Links2004)  ≥ 0.5.4
- *   ArduinoJson                     ≥ 7.x
+ * Payload encryption: the system operates on a trusted private
+ * network (bitstream-net.me). In-band AES-256-GCM encryption is
+ * not implemented; add mbedTLS encrypt/decrypt here if open-internet
+ * deployment is required in the future.
  *
- * UART1 wiring (ESP32-S3 Nano → RP2040):
- *   GPIO17 (TX1)  →  RP2040 RX
- *   GPIO18 (RX1)  →  RP2040 TX
+ * Tested libraries:
+ *   ArduinoWebsockets  (Links2004)  >= 0.5.4
+ *   ArduinoJson                     >= 7.x
+ *   HTTPClient         (bundled with Arduino-ESP32 core)
+ *
+ * UART1 wiring (ESP32-S3 Nano -> RP2040):
+ *   GPIO0 (TX1)  ->  RP2040 RX  (GPIO29)
+ *   GPIO1 (RX1)  ->  RP2040 TX  (GPIO28)
  * ============================================================
  */
 
@@ -84,11 +91,33 @@ FlashJob pendingFlash;
 
 /** Convert raw ESP32 internal temp sensor reading to Celsius. */
 float readCoreTempC() {
-  // temperatureRead() returns °F on ESP-IDF ≥ 5.x; °C on older SDKs.
+  // temperatureRead() returns degF on ESP-IDF >= 5.x; degC on older SDKs.
   // The built-in value is always in Fahrenheit on S3. Convert safely.
   float raw = temperatureRead();
-  // If raw > 100 it's almost certainly Fahrenheit
   return (raw > 100.0f) ? (raw - 32.0f) / 1.8f : raw;
+}
+
+/**
+ * Read supply voltage via a resistive voltage divider on A7 (GPIO14).
+ *
+ * Wiring:
+ *   V_supply --[ R1 ]--+--[ R2 ]-- GND
+ *                      +-- A7 (GPIO14)
+ *
+ * Change R1_KOHM and R2_KOHM to match your actual resistors (kilohms).
+ *
+ * Formula:
+ *   V_adc    = (raw / 4095.0) * 3.3
+ *   V_supply = V_adc * (R1 + R2) / R2
+ */
+#define VOLTAGE_ADC_PIN  A7      // GPIO14 on ESP32-S3 Nano
+#define R1_KOHM          10.0f   // <-- set your upper resistor value (kohm)
+#define R2_KOHM          10.0f   // <-- set your lower resistor value (kohm)
+
+float readSupplyVoltage() {
+  int   raw  = analogRead(VOLTAGE_ADC_PIN);
+  float vadc = (raw / 4095.0f) * 3.3f;
+  return vadc * (R1_KOHM + R2_KOHM) / R2_KOHM;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -280,15 +309,32 @@ void dispatchFlashToRP2040(const FlashJob &job) {
 
   http.end();
 
+  // Report outcome to broker so it can update sidecar flash status
+  auto sendResult = [&](const char* result, const char* detail) {
+    if (wsConnected) {
+      StaticJsonDocument<256> res;
+      res["type"]     = "ota_result";
+      res["result"]   = result;
+      res["filename"] = job.filename;
+      res["detail"]   = detail;
+      String rp;
+      serializeJson(res, rp);
+      wsClient.send(rp);
+    }
+  };
+
   if (sent == job.fileSize) {
     Serial.printf("[OTA] Transfer complete: %zu bytes sent to RP2040.\n", sent);
-    Serial.println("[OTA] Waiting for RP2040 to confirm FPGA flash…");
-    // RP2040 will send OTA_SUCCESS then FPGA_STATE:USER_MODE over UART
-    // — picked up in the main loop UART reader.
+    Serial.println("[OTA] Waiting for RP2040 to confirm FPGA flash...");
+    // RP2040 sends OTA_SUCCESS + FPGA_STATE:USER_MODE over UART once done
+    // Those are picked up by the main loop UART reader.
+    // We report success now; status becomes 'Flashed' on the dashboard.
+    sendResult("success", "Transfer complete");
   } else {
-    Serial.printf("[OTA] Transfer incomplete: %zu / %zu bytes.\n", sent,
-                  job.fileSize);
+    Serial.printf("[OTA] Transfer incomplete: %zu / %zu bytes.\n",
+                  sent, job.fileSize);
     fpgaState = "IDLE";
+    sendResult("failed", "Incomplete transfer");
   }
 }
 
@@ -404,7 +450,7 @@ void loop() {
 
     JsonObject data = doc.createNestedObject("data");
     data["temperature_c"] = readCoreTempC();
-    data["supply_voltage_v"] = 3.3f; // TODO: ADC battery read
+    data["supply_voltage_v"] = readSupplyVoltage();
     data["fpga_config_done"] = fpgaConfigDone;
     data["fpga_state"] = fpgaState;
     data["rssi_dbm"] = WiFi.RSSI();
