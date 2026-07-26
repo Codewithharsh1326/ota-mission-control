@@ -30,7 +30,7 @@
 
 #include <ArduinoJson.h>
 #include <ArduinoWebsockets.h>
-#include <HTTPClient.h>  // For downloading bitstream from broker
+#include <HTTPClient.h> // For downloading bitstream from broker
 #include <WiFi.h>
 #include <esp_task_wdt.h> // Watchdog
 
@@ -224,9 +224,9 @@ void dispatchFlashToRP2040(const FlashJob &job) {
   http.setTimeout(10000); // 10 s connect/read timeout
 
   int httpCode = http.GET();
-  if (httpCode != HTTP_CODE_200) {
-    Serial.printf("[OTA] HTTP GET failed: %d — %s\n",
-                  httpCode, http.errorToString(httpCode).c_str());
+  if (httpCode != HTTP_CODE_OK) {
+    Serial.printf("[OTA] HTTP GET failed: %d — %s\n", httpCode,
+                  http.errorToString(httpCode).c_str());
     http.end();
     fpgaState = "IDLE";
     return;
@@ -286,8 +286,8 @@ void dispatchFlashToRP2040(const FlashJob &job) {
     // RP2040 will send OTA_SUCCESS then FPGA_STATE:USER_MODE over UART
     // — picked up in the main loop UART reader.
   } else {
-    Serial.printf("[OTA] Transfer incomplete: %zu / %zu bytes.\n",
-                  sent, job.fileSize);
+    Serial.printf("[OTA] Transfer incomplete: %zu / %zu bytes.\n", sent,
+                  job.fileSize);
     fpgaState = "IDLE";
   }
 }
