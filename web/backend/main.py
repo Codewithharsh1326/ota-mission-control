@@ -54,18 +54,21 @@ app = FastAPI(
 
 # ---------------------------------------------------------------------------
 # CORS Middleware
-# Fix: Allow Vite dev server (5173), production IP, and domain
+# Allows the Vite dev server, production domain (HTTP + HTTPS), and
+# the raw server IP. Nginx now terminates TLS on port 443 and proxies
+# /api/, /upload, and /ws/ — so browsers may connect over wss:// / https://.
 # ---------------------------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",          # Vite local dev server
-        "http://localhost:3000",          # Alternative dev port
-        "http://92.4.80.246",             # Production server IP
-        "http://bitstream-net.me",        # Production domain
-        "https://bitstream-net.me",       # Production domain (HTTPS)
-        "http://www.bitstream-net.me",
-        "https://www.bitstream-net.me"
+        "http://localhost:5173",           # Vite local dev server
+        "http://localhost:3000",           # Alternative dev port
+        "http://92.4.80.246",              # Production server IP (HTTP)
+        "https://92.4.80.246",             # Production server IP (HTTPS)
+        "http://bitstream-net.me",         # Production domain (HTTP)
+        "https://bitstream-net.me",        # Production domain (HTTPS)
+        "http://www.bitstream-net.me",     # www alias (HTTP)
+        "https://www.bitstream-net.me",    # www alias (HTTPS)
     ],
     allow_credentials=True,
     allow_methods=["*"],

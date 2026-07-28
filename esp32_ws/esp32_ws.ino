@@ -44,9 +44,12 @@
 // ── Credentials & endpoint ───────────────────────────────────────
 const char *SSID = "*********";
 const char *PASSWORD = "********";
-const char *WS_URL = "ws://bitstream-net.me:8000/ws/hardware?node_id=ESP32-S3";
-// Base URL for the download endpoint — must NOT have a trailing slash
-const char *HTTP_SERVER_BASE = "http://bitstream-net.me:8000";
+// Nginx now terminates TLS on port 443 and proxies /ws/ -> localhost:8000
+// Use wss:// (no explicit port) so the browser's secure connection is maintained.
+const char *WS_URL = "wss://bitstream-net.me/ws/hardware?node_id=ESP32-S3";
+// Nginx also proxies /api/ -> localhost:8000 over HTTPS
+const char *HTTP_SERVER_BASE = "https://bitstream-net.me";
+
 
 // ── UART1 pins (dedicated, do NOT conflict with USB-serial) ──────
 #define UART_RX_PIN 0
@@ -110,12 +113,12 @@ float readCoreTempC() {
  *   V_adc    = (raw / 4095.0) * 3.3
  *   V_supply = V_adc * (R1 + R2) / R2
  */
-#define VOLTAGE_ADC_PIN  A7      // GPIO14 on ESP32-S3 Nano
-#define R1_KOHM          10.0f   // <-- set your upper resistor value (kohm)
-#define R2_KOHM          10.0f   // <-- set your lower resistor value (kohm)
+#define VOLTAGE_ADC_PIN A7 // GPIO14 on ESP32-S3 Nano
+#define R1_KOHM 50.0f      // <-- set your upper resistor value (kohm)
+#define R2_KOHM 10.0f      // <-- set your lower resistor value (kohm)
 
 float readSupplyVoltage() {
-  int   raw  = analogRead(VOLTAGE_ADC_PIN);
+  int raw = analogRead(VOLTAGE_ADC_PIN);
   float vadc = (raw / 4095.0f) * 3.3f;
   return vadc * (R1_KOHM + R2_KOHM) / R2_KOHM;
 }
@@ -310,13 +313,13 @@ void dispatchFlashToRP2040(const FlashJob &job) {
   http.end();
 
   // Report outcome to broker so it can update sidecar flash status
-  auto sendResult = [&](const char* result, const char* detail) {
+  auto sendResult = [&](const char *result, const char *detail) {
     if (wsConnected) {
       StaticJsonDocument<256> res;
-      res["type"]     = "ota_result";
-      res["result"]   = result;
+      res["type"] = "ota_result";
+      res["result"] = result;
       res["filename"] = job.filename;
-      res["detail"]   = detail;
+      res["detail"] = detail;
       String rp;
       serializeJson(res, rp);
       wsClient.send(rp);
@@ -331,8 +334,8 @@ void dispatchFlashToRP2040(const FlashJob &job) {
     // We report success now; status becomes 'Flashed' on the dashboard.
     sendResult("success", "Transfer complete");
   } else {
-    Serial.printf("[OTA] Transfer incomplete: %zu / %zu bytes.\n",
-                  sent, job.fileSize);
+    Serial.printf("[OTA] Transfer incomplete: %zu / %zu bytes.\n", sent,
+                  job.fileSize);
     fpgaState = "IDLE";
     sendResult("failed", "Incomplete transfer");
   }

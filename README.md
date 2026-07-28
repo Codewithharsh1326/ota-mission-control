@@ -277,34 +277,25 @@ ESP32-S3  ──WS──►  /ws/hardware  ──► ConnectionManager ──►
 
 ## Dynamic API Routing (`config.js`)
 
-All HTTP and WebSocket URLs are resolved at runtime using `window.location.hostname` — **no domain names are hardcoded**. This means the same production build works regardless of how the server is accessed (IP, domain, subdomain, or localhost).
+All HTTP and WebSocket URLs are resolved at runtime using `window.location` — **no hardcoded port or domain**. Since Nginx now terminates TLS on port 443 and reverse-proxies `/api/`, `/upload`, and `/ws/` to the backend, the app uses whichever port and protocol the browser is currently on.
 
 ```javascript
-const BACKEND_PORT = 8000;
-const HOST = window.location.hostname;
+const HOST        = window.location.host;     // host + port if non-standard
+const PROTOCOL    = window.location.protocol; // "https:" or "http:"
+const WS_PROTOCOL = PROTOCOL === 'https:' ? 'wss:' : 'ws:';
 
-export const API_BASE_URL = `http://${HOST}:${BACKEND_PORT}`;
-export const WS_BASE_URL  = `ws://${HOST}:${BACKEND_PORT}`;
+export const API_BASE_URL = `${PROTOCOL}//${HOST}`;
+export const WS_BASE_URL  = `${WS_PROTOCOL}//${HOST}`;
 ```
 
-| Accessed via | API resolves to | WebSocket resolves to |
+| Accessed via | `API_BASE_URL` | `WS_BASE_URL` |
 |---|---|---|
-| `localhost:5173` (dev) | `http://localhost:8000` | `ws://localhost:8000` |
-| `bitstream-net.me` | `http://bitstream-net.me:8000` | `ws://bitstream-net.me:8000` |
-| `www.bitstream-net.me` | `http://www.bitstream-net.me:8000` | `ws://www.bitstream-net.me:8000` |
-| `92.4.80.246` (IP) | `http://92.4.80.246:8000` | `ws://92.4.80.246:8000` |
+| `localhost:5173` (dev) | `http://localhost:5173` | `ws://localhost:5173` |
+| `https://bitstream-net.me` | `https://bitstream-net.me` | `wss://bitstream-net.me` |
+| `https://www.bitstream-net.me` | `https://www.bitstream-net.me` | `wss://www.bitstream-net.me` |
+| `http://92.4.80.246` (IP) | `http://92.4.80.246` | `ws://92.4.80.246` |
 
-**Files that consume `config.js`:**
-
-| File | What it uses |
-|------|-------------|
-| `App.jsx` | `WS_BASE_URL` → `/ws/telemetry` WebSocket |
-| `OTAUploadZone.jsx` | `API_BASE_URL` → `POST /upload` |
-| `BitstreamHistory.jsx` | `API_BASE_URL` → `GET /api/history` |
-
-> No hardcoded domain names anywhere in the frontend codebase.
-
----
+> On dev, Vite proxies all `/api`, `/upload`, `/ws` requests to `localhost:8000` (configured in `vite.config.js`), so no Nginx is needed locally.
 
 ## Firmware
 
@@ -317,7 +308,7 @@ export const WS_BASE_URL  = `ws://${HOST}:${BACKEND_PORT}`;
 - `esp_task_wdt` (bundled with Arduino-ESP32 core)
 
 **Key behaviour:**
-- Auto-connects to `ws://bitstream-net.me:8000/ws/hardware?node_id=ESP32-S3`
+- Auto-connects to `wss://bitstream-net.me/ws/hardware?node_id=ESP32-S3` (TLS, via Nginx)
 - Reconnects automatically on drop (3 s back-off)
 - Streams a telemetry JSON frame every **1.2 s** (temperature, live ADC voltage, RSSI, uptime, FPGA state)
 - UART1 on **GPIO 0 (TX) / GPIO 1 (RX)** — matches user hardware wiring
@@ -337,8 +328,8 @@ export const WS_BASE_URL  = `ws://${HOST}:${BACKEND_PORT}`;
 **OTA flash flow (on receiving `flash_command` from broker):**
 1. Send `FLASH_PREP:<filename>\n` to RP2040 → wait `ACK`
 2. Send `SIZE:<n>\n` → wait `ACK`
-3. `GET http://bitstream-net.me:8000/api/download/<filename>` — stream response body to RP2040 in 512 B chunks → wait `ACK` per chunk
-4. On completion: send `{ type: "ota_result", result: "success"|"failed", filename }` to broker
+3. `GET https://bitstream-net.me/api/download/<filename>` (via Nginx TLS) — stream response to RP2040 in 512 B chunks → wait `ACK` per chunk
+4. On completion: send `{ type: "ota_result", result: "success"|"failed" }` to broker
 
 **Security note:** Runs on a trusted private network. In-band AES-256-GCM is not implemented; add mbedTLS if open-internet deployment is required.
 
@@ -391,20 +382,20 @@ export const WS_BASE_URL  = `ws://${HOST}:${BACKEND_PORT}`;
 
 ## CORS Configuration
 
-
-Allowed origins in `main.py`:
+Allowed origins in `main.py`. Nginx TLS proxy means requests arrive from the standard HTTPS/WSS origin — no port suffix:
 
 ```python
 allow_origins=[
-    "http://localhost:5173",      # Vite dev server
-    "http://localhost:3000",      # Alternative dev port
-    "http://92.4.80.246",         # Production server IP
-    "http://bitstream-net.me",    # Production domain
-    "https://bitstream-net.me",   # Production domain (HTTPS)
+    "http://localhost:5173",           # Vite dev server
+    "http://localhost:3000",           # Alternative dev port
+    "http://92.4.80.246",              # Production server IP (HTTP)
+    "https://92.4.80.246",             # Production server IP (HTTPS)
+    "http://bitstream-net.me",         # Production domain (HTTP)
+    "https://bitstream-net.me",        # Production domain (HTTPS)
+    "http://www.bitstream-net.me",     # www alias (HTTP)
+    "https://www.bitstream-net.me",    # www alias (HTTPS)
 ]
 ```
-
----
 
 ## Recycle Bin Policy
 
@@ -513,4 +504,5 @@ For Shrike-lite telemetry fields, include `shrike_link`, `fpga_config_done`, and
 | v1.6 | **Two-stage flash pipeline** — `OTAUploadZone` → "Upload to Server (STEP 1)". `BitstreamHistory` → "Available Bitstreams (STEP 2)": radio row selection, Flash action bar, `POST /api/flash` endpoint. Build: ✓ 1786 modules · 626ms |
 | v1.7 | **Firmware hardening** — ESP32: UART pins (0/1), watchdog, onEvent callback, °F→°C fix, ACK/NACK OTA protocol, heartbeat boot guard. RP2040: `split(':', 1)` colon-safe parse, heartbeat reset after boot flash. GitHub repo: `Codewithharsh1326/ota-mission-control`. |
 | v1.8 | **Real file transfer** — `GET /api/download/{filename}` backend endpoint (path-traversal blocked). ESP32 uses `HTTPClient` to stream bitstream → Serial1 UART → RP2040 in 512 B chunks with ACK gate per chunk. |
-| v1.9 | **All TODOs completed** — (1) Removed dead ACK/NACK WS code from broker. (2) Live ADC supply voltage on A7/GPIO14 with configurable R1/R2 voltage divider. (3) AES TODO replaced with architecture note (trusted network). (4) SQLite telemetry logging (`telemetry.db`) — every frame persisted with timestamp, node, packet_id, temp, voltage, RSSI, FPGA state, raw JSON. (5) Per-file flash status persistence via sidecar `uploads/.meta/<filename>.json` — survives page refresh; states: `Ready` → `Flashing` → `Flashed` / `Failed`. ESP32 sends `ota_result` to broker; broker writes sidecar + broadcasts `ota_result` event to dashboard. |
+| v1.9 | **All TODOs completed** — (1) Removed dead ACK/NACK WS code. (2) Live ADC supply voltage on A7/GPIO14 with configurable R1/R2 voltage divider. (3) AES TODO replaced with architecture note. (4) SQLite telemetry logging (`telemetry.db`). (5) Per-file flash status via sidecar `uploads/.meta/<filename>.json`; states: Ready → Flashing → Flashed/Failed. ESP32 sends `ota_result`; broker writes sidecar + broadcasts to dashboard. |
+| v2.0 | **HTTPS / WSS production upgrade** — Nginx now terminates TLS on port 443 (Let's Encrypt cert for `bitstream-net.me`). Nginx reverse-proxies `/api/`, `/upload`, `/ws/` to FastAPI on `localhost:8000`. `config.js` updated to `window.location.host` + dynamic `https:`/`wss:` protocol — port 8000 no longer exposed to the internet. ESP32 firmware updated to `wss://bitstream-net.me` and `https://bitstream-net.me` (no explicit port). CORS allowed origins updated to include `https://92.4.80.246`. |

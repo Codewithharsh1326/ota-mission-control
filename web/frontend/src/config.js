@@ -1,16 +1,23 @@
 /**
  * config.js
  * ─────────────────────────────────────────────────────────────────
- * Central API routing — fully dynamic using window.location.hostname.
+ * Central API routing — fully dynamic using window.location.
  *
- * This works correctly regardless of how the app is accessed:
- *   http://localhost:5173        → connects to localhost:8000
- *   http://bitstream-net.me      → connects to bitstream-net.me:8000
- *   http://www.bitstream-net.me  → connects to www.bitstream-net.me:8000
- *   http://92.4.80.246           → connects to 92.4.80.246:8000
+ * Now that Nginx terminates HTTPS on port 443 and reverse-proxies
+ * /api/, /upload, and /ws/ to the FastAPI backend on port 8000,
+ * the React app no longer needs to hard-code port 8000.
  *
- * No hardcoded domain names. The backend port (8000) is the only
- * fixed value here — change it once if the server port changes.
+ * How it resolves at runtime:
+ *
+ *   Environment               API_BASE_URL               WS_BASE_URL
+ *   ─────────────────────────────────────────────────────────────────
+ *   localhost:5173 (dev)      http://localhost:5173      ws://localhost:5173
+ *   http://92.4.80.246        http://92.4.80.246         ws://92.4.80.246
+ *   https://bitstream-net.me  https://bitstream-net.me   wss://bitstream-net.me
+ *   https://www.bitstream-…   https://www.bitstream-…    wss://www.bitstream-…
+ *
+ * The Vite dev proxy (vite.config.js) forwards /api, /upload, /ws
+ * to localhost:8000, so dev still works without Nginx.
  *
  * Usage:
  *   import { API_BASE_URL, WS_BASE_URL } from '../config';
@@ -18,17 +25,20 @@
  *   new WebSocket(`${WS_BASE_URL}/ws/telemetry`)
  */
 
-const BACKEND_PORT = 8000;
-const HOST = window.location.hostname;
+const HOST        = window.location.host;       // e.g. "bitstream-net.me" or "localhost:5173"
+const PROTOCOL    = window.location.protocol;   // "https:" or "http:"
+const WS_PROTOCOL = PROTOCOL === 'https:' ? 'wss:' : 'ws:';
 
 /**
- * Base URL for all HTTP REST calls (upload, history, health).
- * Resolves to http://<current-host>:8000
+ * Base URL for all HTTP REST calls (upload, history, flash, download).
+ * On production: https://bitstream-net.me  (Nginx proxies /api, /upload)
+ * On dev:        http://localhost:5173      (Vite dev proxy handles /api, /upload)
  */
-export const API_BASE_URL = `http://${HOST}:${BACKEND_PORT}`;
+export const API_BASE_URL = `${PROTOCOL}//${HOST}`;
 
 /**
  * Base URL for all WebSocket connections.
- * Resolves to ws://<current-host>:8000
+ * On production: wss://bitstream-net.me   (Nginx proxies /ws/)
+ * On dev:        ws://localhost:5173       (Vite dev proxy handles /ws/)
  */
-export const WS_BASE_URL = `ws://${HOST}:${BACKEND_PORT}`;
+export const WS_BASE_URL = `${WS_PROTOCOL}//${HOST}`;
