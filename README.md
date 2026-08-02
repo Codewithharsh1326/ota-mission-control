@@ -2,7 +2,7 @@
 
 > **Stack:** React 18 · Vite · Tailwind CSS · FastAPI · WebSockets  
 > **Hardware target:** ESP32-S3 Nano → Shrike-lite MPSoC (RP2040 + FPGA)  
-> **Server:** Ubuntu Linux · `bitstream-net.me` · `92.4.80.246`
+> **Server:** Ubuntu Linux · [https://www.bitstream-net.me/](https://www.bitstream-net.me/)
 
 ---
 
@@ -48,6 +48,8 @@ ota-mission-control/
     │   │   │   ├── TelemetryPanel.jsx     # Live WS telemetry, SVG waveform, frame log
     │   │   │   ├── OTAUploadZone.jsx      # Drag-and-drop .bit/.bin upload (Step 1)
     │   │   │   ├── BitstreamHistory.jsx   # Radio select + Flash to ESP32 (Step 2)
+    │   │   │   ├── DocumentationPanel.jsx # Interactive Examples Viewer
+    │   │   │   ├── VantaBackground.jsx    # Premium Animated Fog Background
     │   │   │   ├── StatusBadge.jsx        # Reusable status pill component
     │   │   │   └── RSSIIndicator.jsx      # 5-bar animated Wi-Fi RSSI visualizer
     │   │   ├── hooks/
@@ -62,6 +64,7 @@ ota-mission-control/
         ├── main.py               # FastAPI broker (WS, upload, flash, download, SQLite logging)
         ├── requirements.txt
         ├── telemetry.db          # SQLite — auto-created on first run
+        ├── precompiled_bin/      # Pre-built examples for Interactive Viewer
         └── uploads/              # Saved bitstreams (auto-created, recycle-bin managed)
             └── .meta/            # Sidecar flash-status JSON files (auto-created)
 ```
@@ -105,34 +108,7 @@ npm run preview
 
 Fixed `100vh` CSS Grid — **no scrolling at any level**. Left column is `420px` wide; right column takes the remaining `1fr`.
 
-```
-┌──────────────────────────── HEADER BAR (44px) ──────────────────────────────┐
-│  🛰 MISSION CONTROL · OTA BITSTREAM FLASH SYSTEM v1.0    WS · HH:MM:SS UTC  │
-├──────────────────────────┬──────────────────────────────────────────────────┤
-│   HARDWARE STATUS        │   LIVE TELEMETRY                                  │
-│   (420px)                │   (1fr)                                           │
-│   ┌─────────────────┐    │   Metric cards: Temp · Voltage · Packet ID · Rate │
-│   │  ESP32-S3 Nano  │    │   SVG waveform (temperature, last 30 frames)      │
-│   │  Uptime/Temp/V  │    │   Scrollable frame log with slide-in animation    │
-│   │  RSSI bars      │    │                                                   │
-│   └─────────────────┘    │                                                   │
-│   ┌─────────────────┐    │                                                   │
-│   │  Shrike-lite    │    │                                                   │
-│   │  MPSoC          │    │                                                   │
-│   │  ─ RP2040 ────  │    │                                                   │
-│   │    SPI/I²C link │    │                                                   │
-│   │    Packets Rx   │    │                                                   │
-│   │  ─ FPGA ──────  │    │                                                   │
-│   │    Config done  │    │                                                   │
-│   │    State mach.  │    │                                                   │
-│   └─────────────────┘    │                                                   │
-├──────────────────────────┼──────────────────────────────────────────────────┤
-│   OTA UPLOAD ZONE        │   BITSTREAM HISTORY                               │
-│   (420px)                │   (1fr, internal scroll)                          │
-│   Drag & drop .bit/.bin  │   Filename · Size · Server Path · Timestamp · Status│
-│   Progress bar + cancel  │   Polls /api/history every 5 seconds              │
-└──────────────────────────┴──────────────────────────────────────────────────┘
-```
+![Dashboard Layout](asset/dashboard.png)
 
 ---
 

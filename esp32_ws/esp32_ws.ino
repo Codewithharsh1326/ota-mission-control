@@ -42,13 +42,16 @@
 #include <esp_task_wdt.h> // Watchdog
 
 // ── Credentials & endpoint ───────────────────────────────────────
-const char *SSID = "*********";
-const char *PASSWORD = "********";
+const char *SSID = "YOUR_WIFI_SSID";
+const char *PASSWORD = "YOUR_WIFI_PASSWORD";
 // Nginx now terminates TLS on port 443 and proxies /ws/ -> localhost:8000
 // Use wss:// (no explicit port) so the browser's secure connection is maintained.
-const char *WS_URL = "wss://bitstream-net.me/ws/hardware?node_id=ESP32-S3";
+// const char *WS_URL = "wss://bitstream-net.me/ws/hardware?node_id=ESP32-S3";
 // Nginx also proxies /api/ -> localhost:8000 over HTTPS
-const char *HTTP_SERVER_BASE = "https://bitstream-net.me";
+// const char *HTTP_SERVER_BASE = "https://bitstream-net.me";
+
+const char *WS_URL = "ws://92.4.80.246:8000/ws/hardware?node_id=ESP32-S3";
+const char *HTTP_SERVER_BASE = "http://92.4.80.246:8000";
 
 
 // ── UART1 pins (dedicated, do NOT conflict with USB-serial) ──────
