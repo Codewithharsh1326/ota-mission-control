@@ -26,6 +26,9 @@ import { TelemetryPanel } from './components/TelemetryPanel';
 import { OTAUploadZone } from './components/OTAUploadZone';
 import { BitstreamHistory } from './components/BitstreamHistory';
 import { StatusBadge } from './components/StatusBadge';
+import { HelloIntro } from './components/HelloIntro';
+import { DocumentationPanel } from './components/DocumentationPanel';
+import VantaBackground from './components/VantaBackground';
 
 import { WS_BASE_URL } from './config';
 
@@ -36,7 +39,7 @@ const WS_URL = `${WS_BASE_URL}/ws/telemetry`;
 function HeaderItem({ label, value, valueColor = '#94a3b8' }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1px' }}>
-      <span style={{ fontSize: '9px', color: '#334155', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+      <span style={{ fontSize: '9px', color: '#94a3b8', letterSpacing: '0.1em', textTransform: 'uppercase' }}>
         {label}
       </span>
       <span style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: valueColor, fontWeight: 600 }}>
@@ -70,6 +73,9 @@ export default function App() {
   const { status: wsStatus, lastMessage, sendMessage } = useWebSocket(WS_URL);
   const { frames, latestMetrics, esp32Online, hwNodes } = useTelemetry(lastMessage);
   const [historyRefresh, setHistoryRefresh] = useState(0);
+  const [showIntro, setShowIntro] = useState(true);
+  const [selectedBitstream, setSelectedBitstream] = useState(null);
+  const [historySourceTab, setHistorySourceTab] = useState('uploads');
 
   const handleUploadComplete = useCallback((result) => {
     // Trigger history table refresh after a successful upload
@@ -89,7 +95,7 @@ export default function App() {
     connecting: '#f59e0b',
     disconnected: '#ef4444',
     error: '#ef4444',
-  }[wsStatus] || '#64748b';
+  }[wsStatus] || '#f1f5f9';
 
   const wsIcon = wsStatus === 'connected' ? Wifi : wsStatus === 'connecting' ? Radio : WifiOff;
   const WsIcon = wsIcon;
@@ -97,8 +103,15 @@ export default function App() {
   const now = new Date().toLocaleTimeString('en-US', { hour12: false });
 
   return (
-    <div
-      className="bg-grid"
+    <>
+      {showIntro && (
+        <HelloIntro 
+          speed={1} 
+          onAnimationComplete={() => setTimeout(() => setShowIntro(false), 600)} 
+        />
+      )}
+      <VantaBackground />
+      <div
       style={{
         width: '100vw',
         height: '100vh',
@@ -116,11 +129,15 @@ export default function App() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        background: 'rgba(13,17,23,0.9)',
-        border: '1px solid rgba(255,255,255,0.06)',
-        borderRadius: '10px',
+        background: 'rgba(13,17,23,0.35)',
+        border: '1px solid rgba(255,255,255,0.1)',
+        borderTop: '1px solid rgba(255,255,255,0.25)',
+        borderLeft: '1px solid rgba(255,255,255,0.15)',
+        borderRadius: '16px',
         padding: '0 16px',
-        backdropFilter: 'blur(12px)',
+        backdropFilter: 'blur(24px) saturate(160%)',
+        WebkitBackdropFilter: 'blur(24px) saturate(160%)',
+        boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.4)',
         position: 'relative',
         overflow: 'hidden',
       }}>
@@ -144,7 +161,7 @@ export default function App() {
             <div style={{ fontSize: '13px', fontWeight: 700, color: '#e2e8f0', letterSpacing: '0.05em' }}>
               MISSION CONTROL
             </div>
-            <div style={{ fontSize: '9px', color: '#334155', fontFamily: 'var(--font-mono)', letterSpacing: '0.12em' }}>
+            <div style={{ fontSize: '9px', color: '#94a3b8', fontFamily: 'var(--font-mono)', letterSpacing: '0.12em' }}>
               OTA BITSTREAM FLASH SYSTEM · v1.0
             </div>
           </div>
@@ -160,17 +177,17 @@ export default function App() {
           <HeaderItem
             label="HW Nodes"
             value={hwNodes.length > 0 ? `${hwNodes.length} online` : 'None'}
-            valueColor={hwNodes.length > 0 ? '#10b981' : '#475569'}
+            valueColor={hwNodes.length > 0 ? '#10b981' : '#cbd5e1'}
           />
           <HeaderItem
             label="Frames Rx"
             value={frames.length.toLocaleString()}
-            valueColor={frames.length > 0 ? '#a855f7' : '#475569'}
+            valueColor={frames.length > 0 ? '#a855f7' : '#cbd5e1'}
           />
           <HeaderItem
             label="Signal"
             value={frames.length > 0 ? 'LIVE' : 'IDLE'}
-            valueColor={frames.length > 0 ? '#10b981' : '#475569'}
+            valueColor={frames.length > 0 ? '#10b981' : '#cbd5e1'}
           />
         </div>
 
@@ -183,7 +200,7 @@ export default function App() {
             </span>
           </div>
           <div style={{
-            fontFamily: 'var(--font-mono)', fontSize: '12px', color: '#475569',
+            fontFamily: 'var(--font-mono)', fontSize: '12px', color: '#cbd5e1',
             borderLeft: '1px solid rgba(255,255,255,0.06)', paddingLeft: '14px',
           }}>
             {now}
@@ -194,17 +211,24 @@ export default function App() {
       {/* ─────────────────────── ROW 2: Main Content ──────────────────────── */}
       <div style={{
         display: 'grid',
-        gridTemplateColumns: '420px 1fr',
+        gridTemplateColumns: '420px 1fr 500px',
         gap: '10px',
         minHeight: 0,
       }}>
         {/* Left: Hardware Status */}
-        <Panel>
+        <Panel style={{ gridColumn: 1 }}>
           <HardwareStatus wsStatus={wsStatus} latestMetrics={latestMetrics} esp32Online={esp32Online} />
         </Panel>
 
+        {/* Center: Examples Documentation */}
+        <DocumentationPanel 
+          style={{ gridColumn: 2 }} 
+          selectedBitstream={selectedBitstream}
+          historySourceTab={historySourceTab}
+        />
+
         {/* Right: Live Telemetry */}
-        <Panel>
+        <Panel style={{ gridColumn: 3 }}>
           <TelemetryPanel frames={frames} latestMetrics={latestMetrics} />
         </Panel>
       </div>
@@ -223,9 +247,15 @@ export default function App() {
 
         {/* Right: Bitstream History */}
         <Panel>
-          <BitstreamHistory refreshTrigger={historyRefresh} esp32Online={esp32Online} />
+          <BitstreamHistory 
+            refreshTrigger={historyRefresh} 
+            esp32Online={esp32Online} 
+            onSelectFile={setSelectedBitstream}
+            onTabChange={setHistorySourceTab}
+          />
         </Panel>
       </div>
     </div>
+    </>
   );
 }

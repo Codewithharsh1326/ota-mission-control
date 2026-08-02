@@ -14,6 +14,7 @@ export default defineConfig({
       '/upload': 'http://localhost:8000',
       '/api': 'http://localhost:8000',
       '/health': 'http://localhost:8000',
+      '/static': 'http://localhost:8000',
       '/ws': {
         target: 'ws://localhost:8000',
         ws: true,

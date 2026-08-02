@@ -30,6 +30,13 @@ export function formatTime(ts) {
   return d.toLocaleTimeString('en-US', { hour12: false });
 }
 
+/** Format a UNIX timestamp or ISO string to HH:MM (no seconds) */
+export function formatTimeShort(ts) {
+  if (!ts) return '—';
+  const d = typeof ts === 'number' ? new Date(ts * 1000) : new Date(ts);
+  return d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+}
+
 /** Format a full ISO timestamp to readable date-time */
 export function formatDateTime(ts) {
   if (!ts) return '—';

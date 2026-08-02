@@ -39,3 +39,6 @@ bitstream*.txt
 
 *.log
 npm-debug.log*
+
+# ── Examples (excluded as requested) ──────────────────────────────
+examples/

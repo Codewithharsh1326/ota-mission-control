@@ -10,6 +10,9 @@
 
 A production-grade, fixed `100vh` Mission Control Dashboard for the ESP32-S3 Nano + Shrike-lite (RP2040 + FPGA on a single MPSoC) OTA bitstream flashing and live telemetry pipeline.
 
+### Special Thanks
+A special thanks to the [Vicharak Shrike GitHub repository](https://github.com/vicharak-in/shrike) for providing all the excellent FPGA hardware examples, pre-built bitstreams, and their detailed READMEs used in the Examples Documentation viewer.
+
 The system has two runtime components that must both be running:
 
 | Component | Port | Command |
@@ -197,6 +200,14 @@ Replaces the old "Bitstream History" panel. Keeps a clear two-stage separation:
   - ESP32 online → `Ready to Flash` (cyan, blinking dot on selected row)
   - ESP32 offline → `Awaiting Hardware` (amber dot)
 - Columns: **●** (radio) · **Filename** · **Size** · **Uploaded At** · **Status**
+
+### 📖 Examples Documentation (Interactive Viewer)
+- Fetches and parses pre-built FPGA examples directly from the server (`/api/examples`)
+- **3-Way Split View**:
+  - **Left Sidebar**: List of all available examples with standard and precompiled bitstreams.
+  - **Main Area**: Rich Markdown rendering of the example's README (with dynamically proxied images ensuring they load flawlessly in production Nginx environments).
+  - **Code Viewer**: Instantly view `.py` or `.ino` source code files directly in the browser with VSCode-style dark theme syntax highlighting. Includes a 1-click **Copy Code** button for instant flashing.
+- Images in documentation are automatically routed via `/api/static/examples/...` so they pass cleanly through production reverse proxies.
 
 ---
 
@@ -506,3 +517,4 @@ For Shrike-lite telemetry fields, include `shrike_link`, `fpga_config_done`, and
 | v1.8 | **Real file transfer** — `GET /api/download/{filename}` backend endpoint (path-traversal blocked). ESP32 uses `HTTPClient` to stream bitstream → Serial1 UART → RP2040 in 512 B chunks with ACK gate per chunk. |
 | v1.9 | **All TODOs completed** — (1) Removed dead ACK/NACK WS code. (2) Live ADC supply voltage on A7/GPIO14 with configurable R1/R2 voltage divider. (3) AES TODO replaced with architecture note. (4) SQLite telemetry logging (`telemetry.db`). (5) Per-file flash status via sidecar `uploads/.meta/<filename>.json`; states: Ready → Flashing → Flashed/Failed. ESP32 sends `ota_result`; broker writes sidecar + broadcasts to dashboard. |
 | v2.0 | **HTTPS / WSS production upgrade** — Nginx now terminates TLS on port 443 (Let's Encrypt cert for `bitstream-net.me`). Nginx reverse-proxies `/api/`, `/upload`, `/ws/` to FastAPI on `localhost:8000`. `config.js` updated to `window.location.host` + dynamic `https:`/`wss:` protocol — port 8000 no longer exposed to the internet. ESP32 firmware updated to `wss://bitstream-net.me` and `https://bitstream-net.me` (no explicit port). CORS allowed origins updated to include `https://92.4.80.246`. |
+| v2.1 | **Interactive Documentation & Vanta.js UI** — Added 3-way interactive Examples Viewer with README rendering and syntax-highlighted source code (`react-syntax-highlighter`). Implemented production-safe static file proxying (`/api/static/examples`) so images load automatically via Nginx. Added premium Vanta.js animated Fog background, loaded securely via CDN in `index.html` to bypass Vite tree-shaking issues in production. Replaced placeholder text with beautiful Apple-style drawing animation. |

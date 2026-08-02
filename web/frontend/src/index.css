@@ -51,22 +51,28 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* --- Grid-line background pattern --- */
+/* --- Main Background --- */
 .bg-grid {
-  background-color: var(--bg-base);
-  background-image:
-    linear-gradient(rgba(0, 212, 255, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0, 212, 255, 0.03) 1px, transparent 1px);
-  background-size: 40px 40px;
+  background-color: #000;
+  background-image: 
+    linear-gradient(rgba(8, 11, 18, 0.4), rgba(8, 11, 18, 0.4)),
+    url('/mars-background.jpg');
+  background-size: cover, cover;
+  background-position: center, center;
+  background-attachment: fixed, fixed;
 }
 
-/* --- Glassmorphism Panel --- */
+
+/* --- Liquid Glass / Glassmorphism Panel --- */
 .panel {
-  background: var(--bg-panel);
-  border: 1px solid var(--border-subtle);
-  border-radius: 12px;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: rgba(13, 17, 23, 0.35); /* Translucent dark tint */
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-top: 1px solid rgba(255, 255, 255, 0.25); /* Specular highlight */
+  border-left: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 16px;
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.4);
   position: relative;
   overflow: hidden;
 }
@@ -78,12 +84,12 @@ body {
   left: 0;
   right: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(0, 212, 255, 0.3), transparent);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
   pointer-events: none;
 }
 
 .panel-glow {
-  box-shadow: 0 0 30px rgba(0, 212, 255, 0.04), inset 0 1px 0 rgba(255,255,255,0.05);
+  box-shadow: 0 0 30px rgba(0, 212, 255, 0.04), inset 0 1px 0 rgba(255,255,255,0.05), 0 8px 32px 0 rgba(0, 0, 0, 0.4);
 }
 
 /* --- Mono font utility --- */
@@ -216,4 +222,81 @@ body {
 }
 .fade-in {
   animation: fade-in 0.3s ease-out;
+}
+
+/* Markdown Documentation Styling */
+.markdown-body {
+  font-family: var(--font-ui);
+}
+.markdown-body h1 {
+  font-size: 1.5em;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+  padding-bottom: 8px;
+  margin-bottom: 16px;
+  color: #00d4ff;
+}
+.markdown-body h2 {
+  font-size: 1.25em;
+  margin-top: 24px;
+  margin-bottom: 16px;
+  color: #e2e8f0;
+}
+.markdown-body h3 {
+  font-size: 1.1em;
+  margin-top: 20px;
+  margin-bottom: 12px;
+  color: #cbd5e1;
+}
+.markdown-body p {
+  margin-bottom: 16px;
+  color: #94a3b8;
+}
+.markdown-body pre {
+  background: rgba(13,17,23,0.8);
+  padding: 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+  border: 1px solid rgba(255,255,255,0.05);
+  margin-bottom: 16px;
+}
+.markdown-body code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: rgba(255,255,255,0.1);
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+  color: #a855f7;
+}
+.markdown-body a {
+  color: #00d4ff;
+  text-decoration: none;
+}
+.markdown-body a:hover {
+  text-decoration: underline;
+}
+.markdown-body ul, .markdown-body ol {
+  padding-left: 20px;
+  margin-bottom: 16px;
+  color: #94a3b8;
+}
+.markdown-body li {
+  margin-bottom: 4px;
+}
+.markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 16px;
+}
+.markdown-body th, .markdown-body td {
+  border: 1px solid rgba(255,255,255,0.1);
+  padding: 8px;
+  text-align: left;
+}
+.markdown-body th {
+  background: rgba(0,0,0,0.2);
+  color: #e2e8f0;
 }

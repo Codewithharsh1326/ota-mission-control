@@ -79,6 +79,7 @@ app.add_middleware(
 # Constants & Directory Setup
 # ---------------------------------------------------------------------------
 UPLOAD_DIR = "uploads"
+PRECOMPILED_DIR = "precompiled_bin"
 META_DIR   = "uploads/.meta"   # sidecar flash-status JSON files
 MAX_FILES = 5           # Recycle bin: keep only last 5 bitstreams
 MAX_AGE_DAYS = 5        # Recycle bin: delete files older than 5 days
@@ -86,8 +87,13 @@ ALLOWED_EXTENSIONS = {".bit", ".bin"}
 TELEMETRY_DB = "telemetry.db"  # SQLite database for historical telemetry
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(PRECOMPILED_DIR, exist_ok=True)
 os.makedirs(META_DIR, exist_ok=True)
 logger.info(f"Upload directory ready: {os.path.abspath(UPLOAD_DIR)}")
+logger.info(f"Precompiled directory ready: {os.path.abspath(PRECOMPILED_DIR)}")
+
+# Serve precompiled_bin as a static directory for images (e.g. for README.md)
+app.mount("/api/static/examples", StaticFiles(directory=PRECOMPILED_DIR), name="examples")
 
 # ---------------------------------------------------------------------------
 # SQLite — Telemetry History
@@ -148,7 +154,8 @@ def log_telemetry(frame: dict):
 # ---------------------------------------------------------------------------
 
 def _meta_path(filename: str) -> str:
-    return os.path.join(META_DIR, filename + ".json")
+    safe_name = filename.replace("/", "_").replace("\\", "_")
+    return os.path.join(META_DIR, safe_name + ".json")
 
 
 def read_flash_status(filename: str) -> str:
@@ -393,13 +400,16 @@ async def upload_bitstream(file: UploadFile = File(...)):
 # Fix: Reads live from uploads/ so recycle bin deletions auto-sync to UI
 # ---------------------------------------------------------------------------
 @app.get("/api/history", tags=["OTA"])
-async def get_history():
+async def get_history(source: str = Query("uploads", pattern="^(uploads|precompiled)$")):
     """
-    Returns a live view of the uploads/ directory.
-    Because it reads from disk on every call, it stays in sync with
-    the recycle bin cleanup task automatically — no cache invalidation needed.
+    Returns a live view of the requested directory.
     """
-    files = glob.glob(f"{UPLOAD_DIR}/*")
+    target_dir = PRECOMPILED_DIR if source == "precompiled" else UPLOAD_DIR
+    if source == "precompiled":
+        files = glob.glob(f"{target_dir}/**/*.bin", recursive=True)
+    else:
+        files = glob.glob(f"{target_dir}/*")
+        
     files.sort(key=os.path.getmtime, reverse=True)  # newest first
 
     history = []
@@ -407,17 +417,18 @@ async def get_history():
         try:
             stats = os.stat(filepath)
             mtime = datetime.fromtimestamp(stats.st_mtime)
+            rel_path = os.path.relpath(filepath, target_dir)
             fname = os.path.basename(filepath)
             # Skip sidecar meta files if they ever appear in the glob
             if fname.endswith(".json"):
                 continue
             history.append({
-                "filename": fname,
+                "filename": rel_path,
                 "size": stats.st_size,
                 "size_human": format_bytes(stats.st_size),
                 "timestamp": mtime.strftime("%Y-%m-%d %H:%M:%S"),
                 "path": filepath,
-                "status": read_flash_status(fname),  # persisted sidecar status
+                "status": read_flash_status(rel_path),  # persisted sidecar status
             })
         except FileNotFoundError:
             # File may have been deleted by cleanup between glob and stat
@@ -430,26 +441,27 @@ async def get_history():
 # POST /api/flash — Trigger flash of a server-side bitstream to ESP32
 # ---------------------------------------------------------------------------
 @app.post("/api/flash", tags=["OTA"])
-async def flash_bitstream(filename: str):
+async def flash_bitstream(filename: str, source: str = Query("uploads", pattern="^(uploads|precompiled)$")):
     """
     Tells the ESP32-S3 to begin flashing a bitstream already stored in
-    the uploads/ directory.
+    the uploads/ or precompiled_bin/ directory.
 
     This endpoint does NOT transfer the file over HTTP to the browser —
     the browser only provides the filename. The broker then:
-      1. Verifies the file exists in uploads/
+      1. Verifies the file exists in the target directory
       2. Forwards a flash_command WebSocket message to all hardware nodes
       3. Returns the result (ok / no_hardware / file_not_found)
 
     The ESP32 firmware then fetches or receives the bitstream via the
     existing hardware WebSocket channel (chunked transfer — TODO).
     """
-    file_path = os.path.join(UPLOAD_DIR, filename)
+    target_dir = PRECOMPILED_DIR if source == "precompiled" else UPLOAD_DIR
+    file_path = os.path.abspath(os.path.join(target_dir, filename))
 
-    if not os.path.isfile(file_path):
+    if not file_path.startswith(os.path.abspath(target_dir)) or not os.path.isfile(file_path):
         raise HTTPException(
             status_code=404,
-            detail=f"File '{filename}' not found in uploads directory."
+            detail=f"File '{filename}' not found in directory."
         )
 
     if not manager.hardware_clients:
@@ -501,36 +513,76 @@ async def flash_bitstream(filename: str):
 # ---------------------------------------------------------------------------
 from fastapi.responses import FileResponse
 
-@app.get("/api/download/{filename}", tags=["OTA"])
+@app.get("/api/download/{filename:path}", tags=["OTA"])
 async def download_bitstream(filename: str):
     """
     Serves a stored bitstream file as a raw binary response so the
     ESP32-S3 can download it over HTTP and stream it to the RP2040
     via UART for FPGA flashing.
-
-    The ESP32 firmware calls:
-      GET http://<broker>:8000/api/download/<filename>
-    and streams the response body in 512-byte chunks directly to
-    the RP2040 over Serial1 (UART).
-
-    Security: only filenames that exist inside uploads/ are served.
-    Path traversal is blocked by os.path.basename().
     """
-    safe_name = os.path.basename(filename)   # block path traversal
-    file_path = os.path.join(UPLOAD_DIR, safe_name)
-
-    if not os.path.isfile(file_path):
+    upload_target = os.path.abspath(os.path.join(UPLOAD_DIR, filename))
+    precompiled_target = os.path.abspath(os.path.join(PRECOMPILED_DIR, filename))
+    
+    if os.path.isfile(upload_target) and upload_target.startswith(os.path.abspath(UPLOAD_DIR)):
+        file_path = upload_target
+    elif os.path.isfile(precompiled_target) and precompiled_target.startswith(os.path.abspath(PRECOMPILED_DIR)):
+        file_path = precompiled_target
+    else:
         raise HTTPException(
             status_code=404,
-            detail=f"File '{safe_name}' not found in uploads directory."
+            detail=f"File '{filename}' not found."
         )
 
-    logger.info(f"Serving bitstream download: '{safe_name}' to ESP32")
+    logger.info(f"Serving bitstream download: '{filename}' to ESP32")
     return FileResponse(
         path=file_path,
         media_type="application/octet-stream",
-        filename=safe_name,
+        filename=os.path.basename(filename),
     )
+
+
+@app.get("/api/examples", tags=["Docs"])
+async def get_examples():
+    """Returns a list of all precompiled examples with their READMEs and source files."""
+    examples = []
+    base_dir = os.path.abspath(PRECOMPILED_DIR)
+    
+    if not os.path.exists(base_dir):
+        return []
+
+    for entry in os.listdir(base_dir):
+        dir_path = os.path.join(base_dir, entry)
+        if os.path.isdir(dir_path):
+            readme_content = ""
+            readme_path = os.path.join(dir_path, "README.md")
+            if os.path.isfile(readme_path):
+                try:
+                    with open(readme_path, "r", encoding="utf-8") as f:
+                        readme_content = f.read()
+                except Exception:
+                    pass
+            
+            source_files = []
+            for file in os.listdir(dir_path):
+                if file.endswith(".ino") or file.endswith(".py"):
+                    try:
+                        with open(os.path.join(dir_path, file), "r", encoding="utf-8") as f:
+                            content = f.read()
+                        source_files.append({"name": file, "content": content})
+                    except Exception:
+                        pass
+                elif file.endswith(".bin"):
+                    source_files.append({"name": file, "content": None})
+            
+            examples.append({
+                "name": entry,
+                "readme": readme_content,
+                "files": source_files
+            })
+            
+    examples.sort(key=lambda x: x["name"])
+    return examples
+
 
 
 # ===========================================================================

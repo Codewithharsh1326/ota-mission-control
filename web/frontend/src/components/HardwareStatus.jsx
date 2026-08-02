@@ -46,11 +46,11 @@ function NodeCard({ title, subtitle, icon: Icon, status, children, glowColor = '
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             transition: 'background 0.4s',
           }}>
-            <Icon size={16} color={isConnected ? '#10b981' : '#475569'} />
+            <Icon size={16} color={isConnected ? '#10b981' : '#cbd5e1'} />
           </div>
           <div>
             <div style={{ fontSize: '13px', fontWeight: 600, color: '#e2e8f0' }}>{title}</div>
-            <div style={{ fontSize: '10px', color: '#64748b', fontFamily: 'var(--font-mono)', marginTop: '1px' }}>{subtitle}</div>
+            <div style={{ fontSize: '10px', color: '#f1f5f9', fontFamily: 'var(--font-mono)', marginTop: '1px' }}>{subtitle}</div>
           </div>
         </div>
         <StatusBadge status={status} pulse={isConnected} />
@@ -68,7 +68,7 @@ function NodeCard({ title, subtitle, icon: Icon, status, children, glowColor = '
 function MetricRow({ label, value, valueColor }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-      <span style={{ fontSize: '11px', color: '#64748b' }}>{label}</span>
+      <span style={{ fontSize: '11px', color: '#f1f5f9' }}>{label}</span>
       <span style={{
         fontSize: '11px',
         fontFamily: 'var(--font-mono)',
@@ -104,7 +104,7 @@ export function HardwareStatus({ wsStatus, latestMetrics, esp32Online }) {
 
   // FPGA config state color — shown inside the Shrike-lite card
   const fpgaStateColor = {
-    'IDLE':        '#64748b',
+    'IDLE':        '#f1f5f9',
     'CONFIGURE':   '#f59e0b',
     'USER_MODE':   '#10b981',
     'RECONFIGURE': '#a855f7',
@@ -141,7 +141,7 @@ export function HardwareStatus({ wsStatus, latestMetrics, esp32Online }) {
         />
         {/* RSSI */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: '11px', color: '#64748b' }}>Wi-Fi RSSI</span>
+          <span style={{ fontSize: '11px', color: '#f1f5f9' }}>Wi-Fi RSSI</span>
           <RSSIIndicator rssiDbm={metrics.rssi_dbm} showLabel={true} />
         </div>
       </NodeCard>
@@ -155,16 +155,12 @@ export function HardwareStatus({ wsStatus, latestMetrics, esp32Online }) {
       >
         {/* RP2040 section */}
         <div style={{
-          fontSize: '9px', fontWeight: 700, color: '#334155',
+          fontSize: '9px', fontWeight: 700, color: '#94a3b8',
           letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '2px',
         }}>
           RP2040 — Config Bridge
         </div>
-        <MetricRow
-          label="SPI/I²C Link"
-          value={metrics.shrike_link || '—'}
-          valueColor={metrics.shrike_link === 'UP' ? '#10b981' : metrics.shrike_link === 'DEGRADED' ? '#f59e0b' : '#64748b'}
-        />
+
         <MetricRow label="Packets Rx" value={metrics.packet_id?.toLocaleString()} />
 
         {/* Divider */}
@@ -176,7 +172,7 @@ export function HardwareStatus({ wsStatus, latestMetrics, esp32Online }) {
 
         {/* FPGA section */}
         <div style={{
-          fontSize: '9px', fontWeight: 700, color: '#334155',
+          fontSize: '9px', fontWeight: 700, color: '#94a3b8',
           letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: '2px',
         }}>
           FPGA — Bitstream Target

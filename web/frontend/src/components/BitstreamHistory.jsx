@@ -41,7 +41,7 @@ function TH({ children, width, align = 'left' }) {
       textAlign: align,
       fontSize: '10px',
       fontWeight: 600,
-      color: '#475569',
+      color: '#cbd5e1',
       letterSpacing: '0.08em',
       textTransform: 'uppercase',
       borderBottom: '1px solid rgba(255,255,255,0.06)',
@@ -64,7 +64,7 @@ function TD({ children, mono = false, align = 'left', muted = false }) {
       textAlign: align,
       fontSize: '11px',
       fontFamily: mono ? 'var(--font-mono)' : 'var(--font-ui)',
-      color: muted ? '#334155' : '#94a3b8',
+      color: muted ? '#94a3b8' : '#94a3b8',
       borderBottom: '1px solid rgba(255,255,255,0.03)',
       whiteSpace: 'nowrap',
       overflow: 'hidden',
@@ -77,11 +77,12 @@ function TD({ children, mono = false, align = 'left', muted = false }) {
 }
 
 // =============================================================================
-export function BitstreamHistory({ refreshTrigger, esp32Online }) {
+export function BitstreamHistory({ refreshTrigger, esp32Online, onSelectFile, onTabChange }) {
   const [history, setHistory]           = useState([]);
   const [loading, setLoading]           = useState(false);
   const [lastFetch, setLastFetch]       = useState(null);
   const [selectedFile, setSelectedFile] = useState(null); // filename string
+  const [sourceTab, setSourceTab]       = useState('uploads'); // 'uploads' | 'precompiled'
   const [flashState, setFlashState]     = useState('idle'); // idle | sending | success | error
   const [flashMsg, setFlashMsg]         = useState('');
 
@@ -89,7 +90,7 @@ export function BitstreamHistory({ refreshTrigger, esp32Online }) {
   const fetchHistory = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/history`);
+      const res = await fetch(`${API_BASE_URL}/api/history?source=${sourceTab}`);
       if (res.ok) {
         const data = await res.json();
         setHistory(data);
@@ -97,6 +98,7 @@ export function BitstreamHistory({ refreshTrigger, esp32Online }) {
         // If selected file was deleted by recycle bin, deselect it
         if (selectedFile && !data.find(f => f.filename === selectedFile)) {
           setSelectedFile(null);
+          onSelectFile?.(null);
         }
       }
     } catch (e) {
@@ -104,7 +106,7 @@ export function BitstreamHistory({ refreshTrigger, esp32Online }) {
     } finally {
       setLoading(false);
     }
-  }, [selectedFile]);
+  }, [selectedFile, sourceTab]);
 
   // Polling + refresh on upload
   useEffect(() => {
@@ -126,7 +128,7 @@ export function BitstreamHistory({ refreshTrigger, esp32Online }) {
 
     try {
       const res = await fetch(
-        `${API_BASE_URL}/api/flash?filename=${encodeURIComponent(selectedFile)}`,
+        `${API_BASE_URL}/api/flash?filename=${encodeURIComponent(selectedFile)}&source=${sourceTab}`,
         { method: 'POST' }
       );
       const data = await res.json();
@@ -152,11 +154,11 @@ export function BitstreamHistory({ refreshTrigger, esp32Online }) {
   const flashLabel  = flashState === 'sending' ? 'Sending…'
                     : flashState === 'success' ? 'Dispatched ✓'
                     : flashState === 'error'   ? 'Failed ✗'
-                    : 'Flash to ESP32';
+                    : 'Flash to Shrike';
   const flashColor  = flashState === 'success' ? '#10b981'
                     : flashState === 'error'   ? '#ef4444'
                     : canFlash                 ? '#00d4ff'
-                    : '#334155';
+                    : '#94a3b8';
   const flashBg     = flashState === 'success' ? 'rgba(16,185,129,0.12)'
                     : flashState === 'error'   ? 'rgba(239,68,68,0.12)'
                     : canFlash                 ? 'rgba(0,212,255,0.1)'
@@ -181,14 +183,14 @@ export function BitstreamHistory({ refreshTrigger, esp32Online }) {
             Available Bitstreams
           </span>
           <span style={{
-            fontSize: '9px', fontWeight: 700, color: '#334155',
+            fontSize: '9px', fontWeight: 700, color: '#94a3b8',
             background: 'rgba(168,85,247,0.08)', border: '1px solid rgba(168,85,247,0.2)',
             borderRadius: '20px', padding: '1px 7px', letterSpacing: '0.08em',
           }}>
             STEP 2 OF 2
           </span>
           <span style={{
-            fontSize: '10px', color: '#334155', fontFamily: 'var(--font-mono)',
+            fontSize: '10px', color: '#94a3b8', fontFamily: 'var(--font-mono)',
             background: 'rgba(255,255,255,0.04)', padding: '2px 7px', borderRadius: '20px',
             border: '1px solid rgba(255,255,255,0.06)',
           }}>
@@ -209,7 +211,7 @@ export function BitstreamHistory({ refreshTrigger, esp32Online }) {
             style={{
               background: 'transparent',
               border: '1px solid rgba(255,255,255,0.06)',
-              color: '#475569',
+              color: '#cbd5e1',
               padding: '3px 8px',
               borderRadius: '6px',
               cursor: 'pointer',
@@ -217,12 +219,51 @@ export function BitstreamHistory({ refreshTrigger, esp32Online }) {
               fontSize: '11px', transition: 'all 0.2s',
             }}
             onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(168,85,247,0.3)'; e.currentTarget.style.color = '#a855f7'; }}
-            onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = '#475569'; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = '#cbd5e1'; }}
           >
             <RefreshCw size={11} className={loading ? 'spin' : ''} />
             Refresh
           </button>
         </div>
+      </div>
+
+      {/* ── Source Toggle ─────────────────────────────────────────────────── */}
+      <div style={{
+        display: 'flex',
+        background: 'rgba(0,0,0,0.2)',
+        borderRadius: '8px',
+        padding: '2px',
+        marginBottom: '10px',
+        border: '1px solid rgba(255,255,255,0.05)',
+        flexShrink: 0,
+      }}>
+        {['uploads', 'precompiled'].map(tab => (
+          <div
+            key={tab}
+            onClick={() => { 
+              setSourceTab(tab); 
+              setSelectedFile(null); 
+              onTabChange?.(tab);
+              onSelectFile?.(null);
+            }}
+            style={{
+              flex: 1,
+              textAlign: 'center',
+              padding: '6px 0',
+              fontSize: '11px',
+              fontWeight: 600,
+              color: sourceTab === tab ? '#fff' : '#94a3b8',
+              background: sourceTab === tab ? 'rgba(168,85,247,0.3)' : 'transparent',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+              border: sourceTab === tab ? '1px solid rgba(168,85,247,0.5)' : '1px solid transparent',
+              letterSpacing: '0.05em',
+            }}
+          >
+            {tab === 'uploads' ? 'Uploaded Files' : 'Precompiled files'}
+          </div>
+        ))}
       </div>
 
       {/* ── Flash action bar ─────────────────────────────────────────────── */}
@@ -234,7 +275,7 @@ export function BitstreamHistory({ refreshTrigger, esp32Online }) {
         borderRadius: '8px', flexShrink: 0,
         marginBottom: '8px',
       }}>
-        <Radio size={12} color={esp32Online ? '#10b981' : '#334155'} />
+        <Radio size={12} color={esp32Online ? '#10b981' : '#94a3b8'} />
         <div style={{ flex: 1, minWidth: 0 }}>
           {selectedFile ? (
             <span style={{
@@ -245,7 +286,7 @@ export function BitstreamHistory({ refreshTrigger, esp32Online }) {
               {selectedFile}
             </span>
           ) : (
-            <span style={{ fontSize: '11px', color: '#334155' }}>
+            <span style={{ fontSize: '11px', color: '#94a3b8' }}>
               Select a bitstream below to flash
             </span>
           )}
@@ -296,7 +337,7 @@ export function BitstreamHistory({ refreshTrigger, esp32Online }) {
           <div style={{
             display: 'flex', flexDirection: 'column', alignItems: 'center',
             justifyContent: 'center', height: '100%', gap: '10px',
-            color: '#334155', padding: '20px',
+            color: '#94a3b8', padding: '20px',
           }}>
             <HardDrive size={28} color="#1e293b" />
             <span style={{ fontSize: '12px' }}>
@@ -320,7 +361,10 @@ export function BitstreamHistory({ refreshTrigger, esp32Online }) {
                 return (
                   <tr
                     key={`${entry.filename}-${idx}`}
-                    onClick={() => setSelectedFile(entry.filename)}
+                    onClick={() => {
+                      setSelectedFile(entry.filename);
+                      onSelectFile?.(entry.filename);
+                    }}
                     style={{
                       cursor: 'pointer',
                       background: isSelected
@@ -352,7 +396,7 @@ export function BitstreamHistory({ refreshTrigger, esp32Online }) {
 
                     <TD mono>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
-                        <HardDrive size={11} color={isSelected ? '#a855f7' : '#334155'} style={{ flexShrink: 0 }} />
+                        <HardDrive size={11} color={isSelected ? '#a855f7' : '#94a3b8'} style={{ flexShrink: 0 }} />
                         <span style={{
                           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                           color: isSelected ? '#e2e8f0' : '#cbd5e1',

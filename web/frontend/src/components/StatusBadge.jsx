@@ -25,7 +25,7 @@ const STATUS_CONFIG = {
   'Awaiting Hardware': { bg: 'rgba(100,116,139,0.12)', border: 'rgba(245,158,11,0.25)', text: '#94a3b8', dot: '#f59e0b' },
 };
 
-const DEFAULT_CONFIG = { bg: 'rgba(100,116,139,0.15)', border: 'rgba(100,116,139,0.3)', text: '#94a3b8', dot: '#64748b' };
+const DEFAULT_CONFIG = { bg: 'rgba(100,116,139,0.15)', border: 'rgba(100,116,139,0.3)', text: '#94a3b8', dot: '#f1f5f9' };
 
 export function StatusBadge({ status, pulse = false, size = 'sm' }) {
   const cfg = STATUS_CONFIG[status] || DEFAULT_CONFIG;

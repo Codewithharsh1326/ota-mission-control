@@ -48,7 +48,7 @@ export function RSSIIndicator({ rssiDbm, showLabel = true }) {
         </span>
       )}
       {(rssiDbm == null) && (
-        <span style={{ marginLeft: '6px', fontSize: '11px', color: '#475569', fontFamily: 'var(--font-mono)' }}>
+        <span style={{ marginLeft: '6px', fontSize: '11px', color: '#cbd5e1', fontFamily: 'var(--font-mono)' }}>
           N/A
         </span>
       )}
