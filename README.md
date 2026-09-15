@@ -17,10 +17,10 @@ The system has two runtime components that must both be running:
 
 | Component | Port | Command |
 |-----------|------|---------|
-| **FastAPI backend** broker | `8000` | `uvicorn main:app --reload` |
+| **FastAPI backend** broker | `<port>` | `uvicorn main:app --reload` |
 | **Vite dev server** (React) | `5173` | `npm run dev` |
 
-During development, Vite proxies all `/upload`, `/api`, and `/ws` requests automatically to port `8000` — no CORS errors.
+During development, Vite proxies all `/upload`, `/api`, and `/ws` requests automatically to the backend port — no CORS errors.
 
 ---
 
@@ -86,7 +86,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 # Start server — accessible on all interfaces
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+uvicorn main:app --reload --host 0.0.0.0 --port <backend-port>
 ```
 
 ### 2 — Frontend (React + Vite)
@@ -280,9 +280,8 @@ export const WS_BASE_URL  = `${WS_PROTOCOL}//${HOST}`;
 | `localhost:5173` (dev) | `http://localhost:5173` | `ws://localhost:5173` |
 | `https://bitstream-net.me` | `https://bitstream-net.me` | `wss://bitstream-net.me` |
 | `https://www.bitstream-net.me` | `https://www.bitstream-net.me` | `wss://www.bitstream-net.me` |
-| `http://92.4.80.246` (IP) | `http://92.4.80.246` | `ws://92.4.80.246` |
 
-> On dev, Vite proxies all `/api`, `/upload`, `/ws` requests to `localhost:8000` (configured in `vite.config.js`), so no Nginx is needed locally.
+> On dev, Vite proxies all `/api`, `/upload`, `/ws` requests to the local backend port (configured in `vite.config.js`), so no Nginx is needed locally.
 
 ## Firmware
 
@@ -375,8 +374,8 @@ Allowed origins in `main.py`. Nginx TLS proxy means requests arrive from the sta
 allow_origins=[
     "http://localhost:5173",           # Vite dev server
     "http://localhost:3000",           # Alternative dev port
-    "http://92.4.80.246",              # Production server IP (HTTP)
-    "https://92.4.80.246",             # Production server IP (HTTPS)
+    "http://<YOUR_SERVER_IP>",         # Production server IP (HTTP)
+    "https://<YOUR_SERVER_IP>",        # Production server IP (HTTPS)
     "http://bitstream-net.me",         # Production domain (HTTP)
     "https://bitstream-net.me",        # Production domain (HTTPS)
     "http://www.bitstream-net.me",     # www alias (HTTP)
@@ -434,7 +433,7 @@ The History table stays in sync automatically because it reads the filesystem on
 Point the ESP32 firmware WebSocket client to:
 
 ```
-ws://<server-ip>:8000/ws/hardware?node_id=ESP32-S3
+wss://your-domain.com/ws/hardware?node_id=ESP32-S3
 ```
 
 On connect the broker will:
@@ -492,5 +491,5 @@ For Shrike-lite telemetry fields, include `shrike_link`, `fpga_config_done`, and
 | v1.7 | **Firmware hardening** — ESP32: UART pins (0/1), watchdog, onEvent callback, °F→°C fix, ACK/NACK OTA protocol, heartbeat boot guard. RP2040: `split(':', 1)` colon-safe parse, heartbeat reset after boot flash. GitHub repo: `Codewithharsh1326/ota-mission-control`. |
 | v1.8 | **Real file transfer** — `GET /api/download/{filename}` backend endpoint (path-traversal blocked). ESP32 uses `HTTPClient` to stream bitstream → Serial1 UART → RP2040 in 512 B chunks with ACK gate per chunk. |
 | v1.9 | **All TODOs completed** — (1) Removed dead ACK/NACK WS code. (2) Live ADC supply voltage on A7/GPIO14 with configurable R1/R2 voltage divider. (3) AES TODO replaced with architecture note. (4) SQLite telemetry logging (`telemetry.db`). (5) Per-file flash status via sidecar `uploads/.meta/<filename>.json`; states: Ready → Flashing → Flashed/Failed. ESP32 sends `ota_result`; broker writes sidecar + broadcasts to dashboard. |
-| v2.0 | **HTTPS / WSS production upgrade** — Nginx now terminates TLS on port 443 (Let's Encrypt cert for `bitstream-net.me`). Nginx reverse-proxies `/api/`, `/upload`, `/ws/` to FastAPI on `localhost:8000`. `config.js` updated to `window.location.host` + dynamic `https:`/`wss:` protocol — port 8000 no longer exposed to the internet. ESP32 firmware updated to `wss://bitstream-net.me` and `https://bitstream-net.me` (no explicit port). CORS allowed origins updated to include `https://92.4.80.246`. |
+| v2.0 | **HTTPS / WSS production upgrade** — Nginx now terminates TLS on port 443 (Let's Encrypt cert for `bitstream-net.me`). Nginx reverse-proxies `/api/`, `/upload`, `/ws/` to FastAPI on `localhost`. `config.js` updated to `window.location.host` + dynamic `https:`/`wss:` protocol — backend port no longer exposed to the internet. ESP32 firmware updated to `wss://bitstream-net.me` and `https://bitstream-net.me` (no explicit port). CORS allowed origins updated for production domain. |
 | v2.1 | **Interactive Documentation & Vanta.js UI** — Added 3-way interactive Examples Viewer with README rendering and syntax-highlighted source code (`react-syntax-highlighter`). Implemented production-safe static file proxying (`/api/static/examples`) so images load automatically via Nginx. Added premium Vanta.js animated Fog background, loaded securely via CDN in `index.html` to bypass Vite tree-shaking issues in production. Replaced placeholder text with beautiful Apple-style drawing animation. |
