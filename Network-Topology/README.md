@@ -2,7 +2,7 @@
 
 Cisco Packet Tracer 9.0.1 simulation of the network path used by OTA Mission Control.
 
-**File:** `DCN_Project.pkt` (open with Cisco Packet Tracer; GitHub cannot preview it)
+**File:** `CiscoNetworkTopology.pkt` (open with Cisco Packet Tracer; GitHub cannot preview it)
 
 ## What it models
 
